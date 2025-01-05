@@ -5,7 +5,7 @@ from setuptools import setup, find_packages
 setup(
     name='cm2',
     version='0.1',
-    packages=find_packages(include=['cm']),
+    packages=find_packages(include=['cm2']),
     url='',
     license_file='LICENSE.txt',
     author='crash',
@@ -21,7 +21,7 @@ setup(
                       'ckautils'],
     entry_points={
         'console_scripts': [
-            'schema  = cm.schema:main'
+            'schema  = cm2.schema:main'
         ]
     }
 )
