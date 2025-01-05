@@ -1,0 +1,7 @@
+regex
+pyyaml
+peewee
+requests
+beautifulsoup4
+lxml
+/path/to/ckautils

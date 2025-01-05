@@ -1,0 +1,13 @@
+---
+##################
+# default config #
+##################
+#
+# Note: other profiles inherit from here on a per-section bassis (meaning,
+# an entire section is replaced, if specified; deeper-level overrides not
+# currently supported)
+
+default:
+  databases:
+    sqlite:
+      db_file:   cm2.sqlite
