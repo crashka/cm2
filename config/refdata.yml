@@ -72,6 +72,7 @@ default:
       fetch_url:       'https://search.alexanderstreet.com/clmu/browse/<CATEGORY>'
       fetch_params:
         items_per_page:  '100'
+        page:            '<KEY>'
       format:          'html'
 
     openopus:

@@ -4,13 +4,13 @@
 """
 
 import regex as re
-from collections.abc import Generator
+from collections.abc import Generator, Iterable
 from importlib import import_module
 from time import sleep
 
 import requests
 
-from .core import cfg, log, DataFile, ConfigError
+from .core import cfg, log, DataFile, ConfigError, ImplementationError
 
 REFDATA_DIR  = 'refdata'
 BASE_CFG_KEY = 'refdata_base'
@@ -24,6 +24,8 @@ sources      = cfg.config(SOURCES_KEY)
 ###############
 # RefdataBase #
 ###############
+
+TOKEN_VARS = ['category', 'key', 'role']
 
 class Refdata:
     """Abstract base class for a reference data source.
@@ -77,10 +79,25 @@ class Refdata:
             setattr(self, key, value)
         pass  # TEMP: for debugging!!!
 
-    def valid_key(self, k: str) -> bool:
-        """A valid fetch key must be be a single lowercase letter.
+    def valid_key(self, key: str | None) -> bool:
+        """A fetch key must be be a single lowercase letter (or ``None`` indicating all
+        items).
         """
-        return len(k) == 1 and ord(k) in range(ord('a'), ord('z') + 1)
+        if key is None:
+            return True
+        return len(key) == 1 and ord(key) in range(ord('a'), ord('z') + 1)
+
+    def expand_keys(self, keys: str | None) -> Iterable[str | None]:
+        """
+        """
+        if keys is None:
+            return [None]
+
+        m = re.fullmatch(r'([a-z])-([a-z])', keys.lower())
+        if m and m.group(1) <= m.group(2):
+            return (chr(cc) for cc in range(ord(m.group(1)), ord(m.group(2)) + 1))
+        else:
+            return keys.split(',')
 
     def token_repl(self, s: str, **kwargs) -> str:
         """Replace tokens in ``s`` with values from instance variables or kwargs.
@@ -91,9 +108,9 @@ class Refdata:
             value = kwargs.get(token_var, getattr(self, token_var, None))
             if value is None:
                 raise RuntimeError(f"Value not found for token {token} (in \"{s}\")")
-            s = s.replace(token, value)
+            s = s.replace(token, str(value))
         return s
-        
+
     def fetch_segs(self, category: str, keys: str = None,
                    dryrun: bool = False) -> Generator[tuple[str, str]]:
         """Generator for fetching individual segments for specified category and key(s).
@@ -104,23 +121,16 @@ class Refdata:
         cat_cfg = self.categories[category]
         cat_params = cat_cfg.get('addl_params') or {}
 
-        keys = keys or self.dflt_keys
-        if keys is None:
-            keylist = [None]
-        else:
-            m = re.fullmatch(r'([a-z])-([a-z])', keys.lower())
-            if m and m.group(1) <= m.group(2):
-                keylist = [chr(cc) for cc in range(ord(m.group(1)), ord(m.group(2)) + 1)]
-            else:
-                keylist = keys.split(',')
-
         sess = requests.Session()
+        keys = keys or self.dflt_keys
+        keylist = self.expand_keys(keys)
+
         for i, key in enumerate(keylist):
-            if key is not None and not self.valid_key(key):
+            if not self.valid_key(key):
                 raise RuntimeError(f"Invalid key '{key}' in \"{keys}\"")
             if i > 0:
                 sleep(self.fetch_interval)
-        
+
             tokvals = {k: v for k, v in (cat_cfg | locals()).items() if k in TOKEN_VARS}
             url     = self.token_repl(self.fetch_url, **tokvals)
             params  = {k: self.token_repl(v, **tokvals)
@@ -135,14 +145,14 @@ class Refdata:
                 log.info(f"Dryrun: GET '{prep.url}', headers: {prep.headers}")
                 yield key, None
                 continue
-                
+
             resp = sess.get(url, params=params, headers=self.http_headers)
             if not resp.ok:
                 errmsg = f"GET '{resp.url}' returned status code {resp.status_code}"
                 log.error(errmsg)
                 raise RuntimeError(errmsg)
             yield key, resp.text
-    
+
     def fetch(self, category: str, keys: str = None, force: bool = False, dryrun: bool = False,
               **kwargs) -> None:
         """
@@ -169,13 +179,15 @@ class Refdata:
 class RefdataArkiv(Refdata):
     """
     """
-    pass
+    def fetch(self, category: str, keys: str = None, force: bool = False, dryrun: bool = False,
+              **kwargs) -> None:
+        """
+        """
+        raise ImplementationError(f"fetch() not yet implemented for {self.name}")
 
 #################
 # RefdataPresto #
 #################
-
-TOKEN_VARS = ['category', 'key', 'role']
 
 class RefdataPresto(Refdata):
     """
@@ -189,7 +201,25 @@ class RefdataPresto(Refdata):
 class RefdataCLMU(Refdata):
     """
     """
-    pass
+    def valid_key(self, key: int | str | None) -> bool:
+        """A fetch key must be be a valid page number (or ``None``, indicating all pages).
+        """
+        assert key is not None  # see TEMP in expand_keys(), below!
+        return isinstance(key, int) or re.fullmatch(r'\d+', key)
+
+    def expand_keys(self, keys: str | None) -> Iterable[str | int]:
+        """
+        """
+        if keys is None:
+            # TEMP: `None` not currently supported (LATER, we will use this to mean
+            # following the 'pager-next' href)!!!
+            raise ImplementationError(f"Fetching all not yet supported for {self.name}")
+
+        m = re.fullmatch(r'(\d+)-(\d+)', keys)
+        if m and int(m.group(1)) <= int(m.group(2)):
+            return range(int(m.group(1)), int(m.group(2)) + 1)
+        else:
+            return keys.split(',')
 
 ###################
 # RefdataOpenOpus #
@@ -198,7 +228,11 @@ class RefdataCLMU(Refdata):
 class RefdataOpenOpus(Refdata):
     """
     """
-    pass
+    def fetch(self, category: str, keys: str = None, force: bool = False, dryrun: bool = False,
+              **kwargs) -> None:
+        """
+        """
+        raise ImplementationError(f"fetch() not yet implemented for {self.name}")
 
 ########
 # main #
@@ -216,12 +250,12 @@ def main() -> int:
       $ python -m refdata <source> <action> <category> [<arg>=<val> [...]]
 
     Actions (and associated arguments):
-    
+
       - fetch keys=<key(s)> force=<bool>
       - load keys=<key(s)> force=<bool>
 
     where:
-    
+
       - <key(s)> is either a single letter (indicating the initial letter of the name), a
         comma-separated list of letters, or a letter range (designated by start-end); all
         entries are assumed if `keys` is omitted
@@ -244,7 +278,7 @@ def main() -> int:
     if category not in source_cfg['categories']:
         print(f"Category '{category}' not known", file=sys.stderr)
         return -1
-        
+
     args, kwargs = parse_argv(sys.argv[4:])
     if args:
         print(f"Unexpected argument(s): {', '.join(args)}", file=sys.stderr)
