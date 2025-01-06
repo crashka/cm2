@@ -1,0 +1,84 @@
+---
+default:
+  refdata_base:
+    module_path:       'cm2.refdata'
+    base_class:        'Refdata'
+    charset:           'utf-8'
+    fetch_interval:    1.0
+    html_parser:       'lxml'
+    http_headers:
+      User-Agent:        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36'
+      Accept:            'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7'
+      Accept-Encoding:   'gzip, deflate, br, zstd'
+      Accept-Language:   'en-US,en;q=0.9,fr;q=0.8'
+      Sec-Fetch-Dest:    'document'
+      Sec-Fetch-Mode:    'navigate'
+      Sec-Fetch-Site:    'cross-site'
+      Referer:           'https://www.google.com/'
+
+  refdata_sources:
+    arkivmusic:
+      full_name:       'ArkivMusic'
+      subclass:        'RefdataArkiv'
+      dflt_keys:       'a-z'
+      categories:
+        composers:
+          entity:        'person'
+          role:          '1'
+        performers:
+          entity:        'performer'
+          role:          '2'
+        conductors:
+          entity:        'person'
+          role:          '3'
+        ensembles:
+          entity:        'ensemble'
+          role:          '4'
+      fetch_url:       'http://www.arkivmusic.com/classical/NameList'
+      fetch_params:
+        alpha:           '<KEY>'
+        role_wanted:     '<ROLE>'
+      format:          'html'
+
+    prestomusic:
+      full_name:       'Presto Music'
+      subclass:        'RefdataPresto'
+      dflt_keys:       'a-z'
+      categories:
+        composers:
+          entity:        'person'
+        artists:
+          entity:        ['person', 'ensemble']
+      fetch_url:       'https://www.prestomusic.com/classical/<CATEGORY>'
+      fetch_params:
+        initial:         '<KEY>'
+      format:          'html'
+
+    clmu:
+      full_name:       'Alexander Street Classical Music Library'
+      subclass:        'RefdataCLMU'
+      categories:
+        person:
+          entity:        'person'
+        composer:
+          entity:        'person'
+        performer-ensemble:
+          entity:        ['person', 'ensemble']
+        composition:
+          entity:        'work'
+          addl_params:
+            sort_by:     'name'
+            sort_order:  'ASC'
+      fetch_url:       'https://search.alexanderstreet.com/clmu/browse/<CATEGORY>'
+      fetch_params:
+        items_per_page:  '100'
+      format:          'html'
+
+    openopus:
+      full_name:       'Open Opus'
+      subclass:        'RefdataOpenOpus'
+      categories:
+        all:
+          entity:        ['person', 'work']
+      fetch_url:       'https://api.openopus.org/work/dump.json'
+      format:          'json'

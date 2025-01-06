@@ -16,7 +16,7 @@ from ckautils import Config
 ############################
 
 DFLT_CONFIG_FILES = ['config.yml',
-                     'stations.yml']
+                     'refdata.yml']
 
 FILE_DIR     = os.path.dirname(os.path.realpath(__file__))
 BASE_DIR     = os.path.realpath(os.path.join(FILE_DIR, os.pardir))

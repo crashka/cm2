@@ -117,7 +117,7 @@ def create(models: list[str] | str = 'all', force: bool = False, **kwargs) -> No
                 raise
     
 ########
-# Main #
+# main #
 ########
 
 import sys
@@ -138,7 +138,7 @@ def main() -> int:
     where:
     
       - <models> is a comma-separate list of model names (case-sensitive), or 'all'
-        (default)
+      - `force` (optional) is false by default
 
     """
     if len(sys.argv) < 2:

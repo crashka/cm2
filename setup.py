@@ -21,7 +21,8 @@ setup(
                       'ckautils'],
     entry_points={
         'console_scripts': [
-            'schema  = cm2.schema:main'
+            'schema  = cm2.schema:main',
+            'refdata  = cm2.refdata:main'
         ]
     }
 )
