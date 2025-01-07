@@ -1,7 +1,7 @@
 ---
 default:
   refdata_base:
-    module_path:       'cm2.refdata'
+    module_path:       null
     base_class:        'Refdata'
     charset:           'utf-8'
     fetch_interval:    1.0
@@ -48,7 +48,7 @@ default:
         composers:
           entity:        'person'
         artists:
-          entity:        ['person', 'ensemble']
+          entity:        ['performer', 'ensemble']
       fetch_url:       'https://www.prestomusic.com/classical/<CATEGORY>'
       fetch_params:
         initial:         '<KEY>'
@@ -63,7 +63,7 @@ default:
         composer:
           entity:        'person'
         performer-ensemble:
-          entity:        ['person', 'ensemble']
+          entity:        ['performer', 'ensemble']
         composition:
           entity:        'work'
           addl_params:
@@ -75,11 +75,26 @@ default:
         page:            '<KEY>'
       format:          'html'
 
+    imslp:
+      full_name:       'IMSLP'
+      subclass:        'RefdataIMSLP'
+      categories:
+        People:
+          entity:        ['person']
+        Composers:
+          entity:        ['person']
+        Performers:
+          entity:        ['performer', 'ensemble']
+        Pages_with_commercial_recordings:
+          entity:        ['person', 'work']
+      fetch_url:       'https://imslp.org/wiki/Category:<CATEGORY>'
+      format:          'json'
+
     openopus:
       full_name:       'Open Opus'
       subclass:        'RefdataOpenOpus'
       categories:
-        all:
+        work:
           entity:        ['person', 'work']
       fetch_url:       'https://api.openopus.org/work/dump.json'
       format:          'json'

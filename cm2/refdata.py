@@ -66,8 +66,10 @@ class Refdata:
             refdata_class = getattr(module, class_name)
         else:
             refdata_class = globals()[class_name]
-        #if not issubclass(refdata_class, cls):
-        #    raise ConfigError(f"'{refdata_class.__name__}' not subclass of '{cls.__name__}'")
+        # ATTENTION: `refdata_class` and `cls` must be loaded from same module for this
+        # check to work!
+        if not issubclass(refdata_class, cls):
+            raise ConfigError(f"'{refdata_class.__name__}' not subclass of '{cls.__name__}'")
 
         return refdata_class(**source_cfg)
 
@@ -220,6 +222,19 @@ class RefdataCLMU(Refdata):
             return range(int(m.group(1)), int(m.group(2)) + 1)
         else:
             return keys.split(',')
+
+################
+# RefdataIMSLP #
+################
+
+class RefdataIMSLP(Refdata):
+    """
+    """
+    def fetch(self, category: str, keys: str = None, force: bool = False, dryrun: bool = False,
+              **kwargs) -> None:
+        """
+        """
+        raise ImplementationError(f"fetch() not yet implemented for {self.name}")
 
 ###################
 # RefdataOpenOpus #

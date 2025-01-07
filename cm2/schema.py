@@ -69,6 +69,7 @@ class PersonName(BaseModel):
     source        = TextField(null=True)
     source_date   = DateField(null=True)
     sources       = JSONField(default=[])  # JSON array of (source, source_date) tuples
+    metainfo      = JSONField(default={})  # JSON object of key-value pairs
     person        = ForeignKeyField(Person, null=True, backref='person_names')
     person_res    = TextField(null=True)
 
