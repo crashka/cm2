@@ -174,28 +174,6 @@ class Refdata:
                 nbytes = f.write(seg_data)
                 log.info(f"{nbytes} bytes written to {seg_path}")
 
-################
-# RefdataArkiv #
-################
-
-class RefdataArkiv(Refdata):
-    """
-    """
-    def fetch(self, category: str, keys: str = None, force: bool = False, dryrun: bool = False,
-              **kwargs) -> None:
-        """
-        """
-        raise ImplementationError(f"fetch() not yet implemented for {self.name}")
-
-#################
-# RefdataPresto #
-#################
-
-class RefdataPresto(Refdata):
-    """
-    """
-    pass
-
 ###############
 # RefdataCLMU #
 ###############
@@ -228,6 +206,28 @@ class RefdataCLMU(Refdata):
 ################
 
 class RefdataIMSLP(Refdata):
+    """
+    """
+    def fetch(self, category: str, keys: str = None, force: bool = False, dryrun: bool = False,
+              **kwargs) -> None:
+        """
+        """
+        raise ImplementationError(f"fetch() not yet implemented for {self.name}")
+
+#################
+# RefdataPresto #
+#################
+
+class RefdataPresto(Refdata):
+    """
+    """
+    pass
+
+################
+# RefdataArkiv #
+################
+
+class RefdataArkiv(Refdata):
     """
     """
     def fetch(self, category: str, keys: str = None, force: bool = False, dryrun: bool = False,

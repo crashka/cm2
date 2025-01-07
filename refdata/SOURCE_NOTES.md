@@ -1,102 +1,12 @@
 # Refdata Source Notes
 
-## IMSLP
-
-Identifying JSON data on category pages:
-
-```
-<script>if(typeof catpagejs=='undefined')catpagejs={};$.extend(catpagejs,{__JSON_DATA__});if(typeof origcatmap=='undefined')origcatmap={};$.extend(origcatmap,{"s1":"Performers"});</script>
-```
-
-Constructing wiki page URLs from category page entry:
-
-"https://imslp.org/wiki/\<URL encoded title>"
-
-### Composers
-
-JSON:
-
-```json
-{
-  "s1": {
-    "0": [
-      "Anonymous",
-      "Collections",
-      "Traditional",
-      "Various"
-    ],
-     .
-     .
-     .
-    "V": [
-      "V. P.",
-      "Vaas, A.J.",
-      "Vaccai, Nicola",
-      "Vaccani, Luigi Maria",
-      "Vacchelli, Giovanni Battista",
-      "Vachon, Pierre",
-      "Vadon, Jean",
-      "Vaes, Gaspard",
-      "Vaet, Jacobus",
-      "Vagedes, Adolph von",
-      "Vagnetti, Angelo",
-      "Vágvölgyi, Béla",
-      "Vaitzman, Or",
-      "La Val",
-       .
-       .
-       .
-    ],
-     .
-     .
-     .
-  }
-}
-```
-
-### Compositions
-
-"Pages\_with\_commercial\_recordings"
-
-JSON:
-
-```json
-{
-  "p1": {
-    "'": [
-      "'E spingole frangese! (De Leva, Enrico)|NNaxos\\0|SScores\\1",
-      "'O marenariello (Gambardella, Salvatore)|NNaxos\\0|SScores\\2",
-      "'O sole mio (Di Capua, Eduardo)|RRecordings\\1|NNaxos\\0|SScores\\6|AArrangements and Transcriptions\\10",
-      "'O surdato 'nnammurato (Cannio, Enrico)|NNaxos\\0|SScores\\1",
-      "'O surdato sbruffone (Cannio, Enrico)|NNaxos\\0|SScores\\1"
-    ],
-     .
-     .
-     .
-    "V": [
-      "V mlhách (Janáček, Leoš)|NNaxos\\0|SScores\\2",
-      "V podvečer, Op.39 (Fibich, Zdeněk)|NNaxos\\0|SFull Scores\\2|PParts\\13|AArrangements and Transcriptions\\4",
-      "Va, dal furor portata, K.21/19c (Mozart, Wolfgang Amadeus)|NNaxos\\0|SScores\\2",
-      "Vaaren – Vaaren er i Brudd!, CNW 353 (Nielsen, Carl)|NNaxos\\0|SScores\\1",
-      "Vadam et circuibo (Victoria, Tomás Luis de)|NNaxos\\0|SScores\\2",
-      "Vado ben spesso cangiando loco (Bononcini, Giovanni)|NNaxos\\0|SScores\\1",
-      "Vado dal piano al monte (Leo, Leonardo)|NNaxos\\0|SScores\\2",
-      "Vado, ma dove?, K.583 (Mozart, Wolfgang Amadeus)|NNaxos\\0|SFull Scores\\2|PParts\\7|VVocal Scores\\1",
-      "Vaga luna che inargenti (Bellini, Vincenzo)|NNaxos\\0|SScores\\5",
-      "Vaghi augelletti che d'amor formate (Conti, Francesco Bartolomeo)|NNaxos\\0|SScores\\1",
-      "Vaghi augelletti, che per valli e monti (Gabrieli, Andrea)|NNaxos\\0",
-      "Vaghi boschetti di soavi allori (Wert, Giaches de)|NNaxos\\0|SScores and Parts\\3|PScores and Parts\\3",
-      "Vaillance (Ascher, Joseph)|NNaxos\\0|SScores\\3|AArrangements and Transcriptions\\1",
-       .
-       .
-       .
-    ],
-     .
-     .
-     .
-  }
-}
-```
+### Sources
+- [CLMU](#clmu)
+- [IMSLP](#imslp)
+- Presto Music
+- ArkivMusic
+- Open Opus
+- Fanfare Magazine
 
 ## CLMU
 
@@ -255,7 +165,6 @@ HTML:
 </div>
 ```
 
-
 ### Performer/Ensemble
 
 HTML:
@@ -309,4 +218,102 @@ HTML:
     </tbody>
   </table>
 </div>
+```
+
+## IMSLP
+
+Identifying JSON data on category pages:
+
+```
+<script>if(typeof catpagejs=='undefined')catpagejs={};$.extend(catpagejs,{__JSON_DATA__});if(typeof origcatmap=='undefined')origcatmap={};$.extend(origcatmap,{"s1":"Performers"});</script>
+```
+
+Constructing wiki page URLs from category page entry:
+
+"https://imslp.org/wiki/\<URL encoded title>"
+
+### Composers
+
+JSON:
+
+```json
+{
+  "s1": {
+    "0": [
+      "Anonymous",
+      "Collections",
+      "Traditional",
+      "Various"
+    ],
+     .
+     .
+     .
+    "V": [
+      "V. P.",
+      "Vaas, A.J.",
+      "Vaccai, Nicola",
+      "Vaccani, Luigi Maria",
+      "Vacchelli, Giovanni Battista",
+      "Vachon, Pierre",
+      "Vadon, Jean",
+      "Vaes, Gaspard",
+      "Vaet, Jacobus",
+      "Vagedes, Adolph von",
+      "Vagnetti, Angelo",
+      "Vágvölgyi, Béla",
+      "Vaitzman, Or",
+      "La Val",
+       .
+       .
+       .
+    ],
+     .
+     .
+     .
+  }
+}
+```
+
+### Compositions
+
+"Pages\_with\_commercial\_recordings"
+
+JSON:
+
+```json
+{
+  "p1": {
+    "'": [
+      "'E spingole frangese! (De Leva, Enrico)|NNaxos\\0|SScores\\1",
+      "'O marenariello (Gambardella, Salvatore)|NNaxos\\0|SScores\\2",
+      "'O sole mio (Di Capua, Eduardo)|RRecordings\\1|NNaxos\\0|SScores\\6|AArrangements and Transcriptions\\10",
+      "'O surdato 'nnammurato (Cannio, Enrico)|NNaxos\\0|SScores\\1",
+      "'O surdato sbruffone (Cannio, Enrico)|NNaxos\\0|SScores\\1"
+    ],
+     .
+     .
+     .
+    "V": [
+      "V mlhách (Janáček, Leoš)|NNaxos\\0|SScores\\2",
+      "V podvečer, Op.39 (Fibich, Zdeněk)|NNaxos\\0|SFull Scores\\2|PParts\\13|AArrangements and Transcriptions\\4",
+      "Va, dal furor portata, K.21/19c (Mozart, Wolfgang Amadeus)|NNaxos\\0|SScores\\2",
+      "Vaaren – Vaaren er i Brudd!, CNW 353 (Nielsen, Carl)|NNaxos\\0|SScores\\1",
+      "Vadam et circuibo (Victoria, Tomás Luis de)|NNaxos\\0|SScores\\2",
+      "Vado ben spesso cangiando loco (Bononcini, Giovanni)|NNaxos\\0|SScores\\1",
+      "Vado dal piano al monte (Leo, Leonardo)|NNaxos\\0|SScores\\2",
+      "Vado, ma dove?, K.583 (Mozart, Wolfgang Amadeus)|NNaxos\\0|SFull Scores\\2|PParts\\7|VVocal Scores\\1",
+      "Vaga luna che inargenti (Bellini, Vincenzo)|NNaxos\\0|SScores\\5",
+      "Vaghi augelletti che d'amor formate (Conti, Francesco Bartolomeo)|NNaxos\\0|SScores\\1",
+      "Vaghi augelletti, che per valli e monti (Gabrieli, Andrea)|NNaxos\\0",
+      "Vaghi boschetti di soavi allori (Wert, Giaches de)|NNaxos\\0|SScores and Parts\\3|PScores and Parts\\3",
+      "Vaillance (Ascher, Joseph)|NNaxos\\0|SScores\\3|AArrangements and Transcriptions\\1",
+       .
+       .
+       .
+    ],
+     .
+     .
+     .
+  }
+}
 ```
