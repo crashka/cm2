@@ -109,6 +109,61 @@ HTML:
 </div>
 ```
 
+### Performer/Ensemble
+
+HTML:
+
+```html
+<div class="view-content">
+  <table class="views-table cols-2"  summary="Table of Browse Performers / Ensembles for Music Online: Classical Music Library." tabindex="0">
+    <thead>
+      <tr>
+        <th scope="col" class="views-field views-field-name active">
+          Performer / Ensemble
+        </th>
+        <th scope="col" class="views-field views-field-count">
+          <a href="/clmu/browse/performer-ensemble?items_per_page=100&amp;page=100&amp;order=count" title="sort by Related works">Related works</a>
+        </th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="even views-row-first">
+        <td class="views-field views-field-name active" >
+          Kammerchor-St.-Andreas Hildesheim
+        </td>
+        <td class="views-field views-field-count" >
+          <a href="/clmu/search?ff%5B0%5D=performing_body_facet%3AKammerchor-St.-Andreas%20Hildesheim">1</a>
+        </td>
+      </tr>
+      <tr class="even">
+        <td class="views-field views-field-name active" >
+          Kapralova Quartet
+        </td>
+        <td class="views-field views-field-count" >
+          <a href="/clmu/search?ff%5B0%5D=performing_body_facet%3AKapralova%20Quartet">2</a>
+        </td>
+      </tr>
+      <tr class="odd">
+        <td class="views-field views-field-name active" >
+          Karen Clark, fl. 1995
+        </td>
+        <td class="views-field views-field-count" >
+          <a href="/clmu/search?ff%5B0%5D=performing_body_facet%3AKaren%20Clark%2C%20fl.%201995">1</a>
+        </td>
+      </tr>
+      <tr class="even">
+        <td class="views-field views-field-name active" >
+          Karen Click
+        </td>
+        <td class="views-field views-field-count" >
+          <a href="/clmu/search?ff%5B0%5D=performing_body_facet%3AKaren%20Click">1</a>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+```
+
 ### Person
 
 HTML:
@@ -165,61 +220,6 @@ HTML:
 </div>
 ```
 
-### Performer/Ensemble
-
-HTML:
-
-```html
-<div class="view-content">
-  <table class="views-table cols-2"  summary="Table of Browse Performers / Ensembles for Music Online: Classical Music Library." tabindex="0">
-    <thead>
-      <tr>
-        <th scope="col" class="views-field views-field-name active">
-          Performer / Ensemble
-        </th>
-        <th scope="col" class="views-field views-field-count">
-          <a href="/clmu/browse/performer-ensemble?items_per_page=100&amp;page=100&amp;order=count" title="sort by Related works">Related works</a>
-        </th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr class="even views-row-first">
-        <td class="views-field views-field-name active" >
-          Kammerchor-St.-Andreas Hildesheim
-        </td>
-        <td class="views-field views-field-count" >
-          <a href="/clmu/search?ff%5B0%5D=performing_body_facet%3AKammerchor-St.-Andreas%20Hildesheim">1</a>
-        </td>
-      </tr>
-      <tr class="even">
-        <td class="views-field views-field-name active" >
-          Kapralova Quartet
-        </td>
-        <td class="views-field views-field-count" >
-          <a href="/clmu/search?ff%5B0%5D=performing_body_facet%3AKapralova%20Quartet">2</a>
-        </td>
-      </tr>
-      <tr class="odd">
-        <td class="views-field views-field-name active" >
-          Karen Clark, fl. 1995
-        </td>
-        <td class="views-field views-field-count" >
-          <a href="/clmu/search?ff%5B0%5D=performing_body_facet%3AKaren%20Clark%2C%20fl.%201995">1</a>
-        </td>
-      </tr>
-      <tr class="even">
-        <td class="views-field views-field-name active" >
-          Karen Click
-        </td>
-        <td class="views-field views-field-count" >
-          <a href="/clmu/search?ff%5B0%5D=performing_body_facet%3AKaren%20Click">1</a>
-        </td>
-      </tr>
-    </tbody>
-  </table>
-</div>
-```
-
 ## IMSLP
 
 Identifying JSON data on category pages:
@@ -230,13 +230,13 @@ Identifying JSON data on category pages:
 
 Constructing wiki page URLs from category page entry:
 
-"https://imslp.org/wiki/\<URL encoded title>"
+`https://imslp.org/wiki/<URL encoded title>`
 
 ### Composers
 
 JSON:
 
-```json
+```
 {
   "s1": {
     "0": [
@@ -276,11 +276,11 @@ JSON:
 
 ### Compositions
 
-"Pages\_with\_commercial\_recordings"
+Actual category name: "Pages\_with\_commercial\_recordings"
 
 JSON:
 
-```json
+```
 {
   "p1": {
     "'": [

@@ -21,37 +21,39 @@ default:
       full_name:       'Alexander Street Classical Music Library'
       subclass:        'RefdataCLMU'
       categories:
-        person:
-          entity:        'person'
         composer:
-          entity:        'person'
-        performer-ensemble:
-          entity:        ['performer', 'ensemble']
+          loader:        'load_composer'
         composition:
-          entity:        'work'
+          loader:        'load_work'
           addl_params:
             sort_by:     'name'
             sort_order:  'ASC'
+        performer-ensemble:
+          loader:        'load_perf_ens'
+        person:
+          loader:        'load_person'
       fetch_url:       'https://search.alexanderstreet.com/clmu/browse/<CATEGORY>'
       fetch_params:
         items_per_page:  '100'
         page:            '<KEY>'
-      format:          'html'
+      fetch_format:    'html'
+      data_format:     'html'
 
     imslp:
       full_name:       'IMSLP'
       subclass:        'RefdataIMSLP'
       categories:
-        People:
-          entity:        ['person']
         Composers:
-          entity:        ['person']
-        Performers:
-          entity:        ['performer', 'ensemble']
+          loader:        'load_composer'
         Pages_with_commercial_recordings:
-          entity:        ['person', 'work']
+          loader:        'load_work'
+        Performers:
+          loader:        'load_perf_ens'
+        People:
+          loader:        'load_person'
       fetch_url:       'https://imslp.org/wiki/Category:<CATEGORY>'
-      format:          'json'
+      fetch_format:    'html'
+      data_format:     'json'
 
     prestomusic:
       full_name:       'Presto Music'
@@ -59,13 +61,14 @@ default:
       dflt_keys:       'a-z'
       categories:
         composers:
-          entity:        'person'
+          loader:        'load_person'
         artists:
-          entity:        ['performer', 'ensemble']
+          loader:        'load_perf_ens'
       fetch_url:       'https://www.prestomusic.com/classical/<CATEGORY>'
       fetch_params:
         initial:         '<KEY>'
-      format:          'html'
+      fetch_format:    'html'
+      data_format:     'html'
 
     arkivmusic:
       full_name:       'ArkivMusic'
@@ -73,28 +76,30 @@ default:
       dflt_keys:       'a-z'
       categories:
         composers:
-          entity:        'person'
           role:          '1'
+          loader:        'load_composer'
         performers:
-          entity:        'performer'
           role:          '2'
+          loader:        'load_performer'
         conductors:
-          entity:        'person'
           role:          '3'
+          loader:        'load_conductor'
         ensembles:
-          entity:        'ensemble'
           role:          '4'
+          loader:        'load_ensemble'
       fetch_url:       'http://www.arkivmusic.com/classical/NameList'
       fetch_params:
         alpha:           '<KEY>'
         role_wanted:     '<ROLE>'
-      format:          'html'
+      fetch_format:    'html'
+      data_format:     'html'
 
     openopus:
       full_name:       'Open Opus'
       subclass:        'RefdataOpenOpus'
       categories:
         work:
-          entity:        ['person', 'work']
+          loader:        ['person', 'work']
       fetch_url:       'https://api.openopus.org/work/dump.json'
-      format:          'json'
+      fetch_format:    'json'
+      data_format:     'json'

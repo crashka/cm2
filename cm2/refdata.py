@@ -3,20 +3,24 @@
 """Module for fetching and loading reference data from external sources.
 """
 
-import regex as re
+import json
 from collections.abc import Generator, Iterable
-from importlib import import_module
+from typing import TextIO
 from time import sleep
+from glob import glob
+from importlib import import_module
 
+import regex as re
 import requests
+from bs4 import BeautifulSoup
 
-from .core import cfg, log, DataFile, ConfigError, ImplementationError
+from .core import (cfg, log, DataFile, ConfigError, ImplementationError, DFLT_CHARSET,
+                   DFLT_FETCH_INT, DFLT_HTML_PARSER)
+
 
 REFDATA_DIR  = 'refdata'
 BASE_CFG_KEY = 'refdata_base'
 SOURCES_KEY  = 'refdata_sources'
-
-DFLT_FETCH_INTERVAL = 1.0
 
 base_cfg     = cfg.config(BASE_CFG_KEY)
 sources      = cfg.config(SOURCES_KEY)
@@ -24,6 +28,8 @@ sources      = cfg.config(SOURCES_KEY)
 ###############
 # RefdataBase #
 ###############
+
+SegData = BeautifulSoup | dict
 
 TOKEN_VARS = ['category', 'key', 'role']
 
@@ -33,20 +39,21 @@ class Refdata:
     # base config parameters
     module_path:    str
     base_class:     str
-    charset:        str
-    fetch_interval: float = DFLT_FETCH_INTERVAL
-    html_parser:    str
-    http_headers:   dict[str, str]
+    charset:        str            = DFLT_CHARSET
+    fetch_interval: float          = DFLT_FETCH_INT
+    html_parser:    str            = DFLT_HTML_PARSER
+    http_headers:   dict[str, str] = {}
 
     # source config parameters
     name:           str
     full_name:      str
     subclass:       str
-    dflt_keys:      str = None
+    dflt_keys:      str            = None
     categories:     dict[str, dict[str, str]]
     fetch_url:      str
     fetch_params:   dict[str, str] = {}
-    format:         str
+    fetch_format:   str
+    data_format:    str
 
     @classmethod
     def new(cls, source_name: str, **kwargs) -> 'Refdata':
@@ -93,7 +100,7 @@ class Refdata:
         """
         """
         if keys is None:
-            return [None]
+            return [keys]
 
         m = re.fullmatch(r'([a-z])-([a-z])', keys.lower())
         if m and m.group(1) <= m.group(2):
@@ -102,7 +109,7 @@ class Refdata:
             return keys.split(',')
 
     def token_repl(self, s: str, **kwargs) -> str:
-        """Replace tokens in ``s`` with values from instance variables or kwargs.
+        """Replace tokens in ``s`` with values from kwargs or instance variables.
         """
         tokens = re.findall(r'(\<[\p{Lu}\d_]+\>)', s)
         for token in tokens:
@@ -130,9 +137,8 @@ class Refdata:
         for i, key in enumerate(keylist):
             if not self.valid_key(key):
                 raise RuntimeError(f"Invalid key '{key}' in \"{keys}\"")
-            if i > 0:
-                sleep(self.fetch_interval)
 
+            # note that both `category` and `key` are in `TOKEN_VARS`
             tokvals = {k: v for k, v in (cat_cfg | locals()).items() if k in TOKEN_VARS}
             url     = self.token_repl(self.fetch_url, **tokvals)
             params  = {k: self.token_repl(v, **tokvals)
@@ -148,6 +154,8 @@ class Refdata:
                 yield key, None
                 continue
 
+            if i > 0:
+                sleep(self.fetch_interval)
             resp = sess.get(url, params=params, headers=self.http_headers)
             if not resp.ok:
                 errmsg = f"GET '{resp.url}' returned status code {resp.status_code}"
@@ -167,12 +175,83 @@ class Refdata:
                 assert seg_data is None
                 continue
 
-            seg_file = "%s:%s.%s" % (category, key, self.format)
+            seg_file = "%s:%s.%s" % (category, key, self.fetch_format)
             seg_dirs = [REFDATA_DIR, self.name, category]
             seg_path = DataFile(seg_file, seg_dirs)
             with open(seg_path, 'w') as f:
                 nbytes = f.write(seg_data)
                 log.info(f"{nbytes} bytes written to {seg_path}")
+
+    def get_seg_data(self, fp: TextIO) -> SegData:
+        """
+        """
+        if self.data_format == 'html':
+            return BeautifulSoup(fp, self.html_parser)
+        if self.data_format == 'json':
+            return json.load(fp)
+
+        raise ConfigError(f"Unknown data_format {self.data_format}")
+
+    def read_segs(self, category: str, keys: str = None) -> Generator[tuple[str, SegData]]:
+        """Generator for reading individual segment data files for specified category and
+        key(s).  Yield value is a (key, data) tuple.
+        """
+        if category not in self.categories:
+            raise RuntimeError(f"Category '{category}' not known for '{self.full_name}'")
+
+        if keys is None:
+            keys = self.dflt_keys
+        keylist = self.expand_keys(keys)
+
+        for key in keylist:
+            if not self.valid_key(key):
+                raise RuntimeError(f"Invalid key '{key}' in \"{keys}\"")
+            if key is None:
+                key = '*'
+
+            seg_file = "%s:%s.%s" % (category, key, self.data_format)
+            seg_dirs = [REFDATA_DIR, self.name, category]
+            seg_glob = DataFile(seg_file, seg_dirs)
+            for seg_path in glob(seg_glob):
+                with open(seg_path) as fp:
+                    seg_data = self.get_seg_data(fp)
+                yield seg_path, seg_data
+
+    def load_composer(self, data: SegData, dryrun: bool = False) -> tuple[int, int, int]:
+        """Return tuple of record counts: [inserted, updated, skipped].
+        """
+        assert isinstance(data, BeautifulSoup)
+        ins  = 0
+        upd  = 0
+        skip = 0
+        soup = data
+        content = soup.select_one("div.view-content")
+        for tr in content.select("tbody tr"):
+            comp = tr.select_one("td.views-field-name").string.strip()
+            link = tr.select_one("td.views-field-count").a['href']
+
+            if dryrun:
+                print(comp)
+                continue
+            raise ImplementationError("Not yet implemented")
+
+        return ins, upd, skip
+
+    def load(self, category: str, keys: str = None, force: bool = False, dryrun: bool = False,
+             **kwargs) -> None:
+        """
+        """
+        if kwargs:
+            raise RuntimeError(f"Unexpected argument(s): {', '.join(kwargs.keys())}")
+        cat_cfg = self.categories[category]
+        loader = cat_cfg.get('loader')
+        if not loader:
+            raise ConfigError(f"Category {category} does not have a 'loader' attribute")
+        load_func = getattr(self, loader)
+
+        for file, data in self.read_segs(category, keys):
+            ins, upd, skip = load_func(data, dryrun)
+            log.info(f"Load from {file}: {ins} inserted, {upd} updated, {skip} skipped")
 
 ###############
 # RefdataCLMU #
@@ -184,16 +263,15 @@ class RefdataCLMU(Refdata):
     def valid_key(self, key: int | str | None) -> bool:
         """A fetch key must be be a valid page number (or ``None``, indicating all pages).
         """
-        assert key is not None  # see TEMP in expand_keys(), below!
+        if key is None:
+            return True
         return isinstance(key, int) or re.fullmatch(r'\d+', key)
 
-    def expand_keys(self, keys: str | None) -> Iterable[str | int]:
+    def expand_keys(self, keys: str | int | None) -> Iterable[str | int | None]:
         """
         """
-        if keys is None:
-            # TEMP: `None` not currently supported (LATER, we will use this to mean
-            # following the 'pager-next' href)!!!
-            raise ImplementationError(f"Fetching all not yet supported for {self.name}")
+        if keys is None or isinstance(keys, int):
+            return [keys]
 
         m = re.fullmatch(r'(\d+)-(\d+)', keys)
         if m and int(m.group(1)) <= int(m.group(2)):
@@ -266,16 +344,21 @@ def main() -> int:
 
     Actions (and associated arguments):
 
-      - fetch keys=<key(s)> force=<bool>
-      - load keys=<key(s)> force=<bool>
+      - fetch keys=<key(s)> force=<bool> dryrun=<bool>
+
+      - load keys=<key(s)> force=<bool> dryrun=<bool>
 
     where:
 
       - <key(s)> is either a single letter (indicating the initial letter of the name), a
         comma-separated list of letters, or a letter range (designated by start-end); all
         entries are assumed if `keys` is omitted
-      - `force` (optional) is false by default
 
+      - `force` (optional, default false) indicates that existing entries should be
+        overwritten
+
+      - `dryrun` (optional, default false) indicates that writes to files or database are
+         not performed (would-be actions are printed to stdout instead)
     """
     if len(sys.argv) < 4:
         print(f"Insufficient arguments specified", file=sys.stderr)
@@ -302,7 +385,9 @@ def main() -> int:
     refdata = Refdata.new(source)
     refdata_func = getattr(refdata, action)
 
-    refdata_func(category, **kwargs)  # any return (no exception) is considered success
+    # note that kwargs are validated by the action; return value is ignored (exceptions
+    # should be raised for errors)
+    refdata_func(category, **kwargs)
     return 0
 
 if __name__ == '__main__':
