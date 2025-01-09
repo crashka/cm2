@@ -7,6 +7,8 @@
 - ArkivMusic
 - Open Opus
 - Fanfare Magazine
+- [Wikipedia](#wikipedia)
+- [Classite](#classite)
 
 ## CLMU
 
@@ -315,5 +317,95 @@ JSON:
      .
      .
   }
+}
+```
+
+## Wikipedia
+
+https://en.wikipedia.org/wiki/Category:Composers
+
+https://en.wikipedia.org/wiki/Category:Classical_composers
+
+## Classite
+
+### Persons
+
+
+URL (POST):
+
+`https://admin.classite.com/ajaxRequest/scaffold/getList`
+
+POST Data:
+
+```
+draw=1
+columns[0][data]=id
+columns[0][name]=
+columns[0][searchable]=true
+columns[0][orderable]=true
+columns[0][search][value]=
+columns[0][search][regex]=false
+columns[1][data]=first_name
+columns[1][name]=
+columns[1][searchable]=true
+columns[1][orderable]=true
+columns[1][search][value]=
+columns[1][search][regex]=false
+columns[2][data]=family_name
+columns[2][name]=
+columns[2][searchable]=true
+columns[2][orderable]=true
+columns[2][search][value]=
+columns[2][search][regex]=false
+columns[3][data]=birth_date
+columns[3][name]=
+columns[3][searchable]=true
+columns[3][orderable]=true
+columns[3][search][value]=
+columns[3][search][regex]=false
+columns[4][data]=death_date
+columns[4][name]=
+columns[4][searchable]=true
+columns[4][orderable]=true
+columns[4][search][value]=
+columns[4][search][regex]=false
+columns[5][data]=role_type
+columns[5][name]=
+columns[5][searchable]=true
+columns[5][orderable]=true
+columns[5][search][value]=
+columns[5][search][regex]=false
+order[0][column]=2
+order[0][dir]=asc
+start=0
+length=10
+search[value]=
+search[regex]=false
+model_class=AM_classical_persons
+controller=AC_classical_persons
+details_action=viewOneRecordHistory
+edit_mode=0
+```
+
+JSON:
+
+```
+{
+  "draw": "1",
+  "recordsTotal": "40144",
+  "recordsFiltered": "40144",
+  "data": [
+    {
+      "id": "<span data-fieldname='id' class='H_scaffold_inputInt'>3521</span>",
+      "first_name": "<span data-fieldname='first_name' class='H_scaffold_inputText' >Torstein</span>",
+      "family_name": "<span data-fieldname='family_name' class='H_scaffold_inputText' >Aagaard-Nilsen</span>",
+      "birth_date": "<span data-fieldname='birth_date' class='H_scaffold_inputText' >1964-01-11</span>",
+      "death_date": "<span data-fieldname='death_date' class='H_scaffold_inputText' ></span>",
+      "role_type": "<span data-fieldname='role_type' class='H_scaffold_inputText' >Composer</span>"
+    },
+    .
+    .
+    .
+  ]
 }
 ```

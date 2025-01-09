@@ -217,26 +217,6 @@ class Refdata:
                     seg_data = self.get_seg_data(fp)
                 yield seg_path, seg_data
 
-    def load_composer(self, data: SegData, dryrun: bool = False) -> tuple[int, int, int]:
-        """Return tuple of record counts: [inserted, updated, skipped].
-        """
-        assert isinstance(data, BeautifulSoup)
-        ins  = 0
-        upd  = 0
-        skip = 0
-        soup = data
-        content = soup.select_one("div.view-content")
-        for tr in content.select("tbody tr"):
-            comp = tr.select_one("td.views-field-name").string.strip()
-            link = tr.select_one("td.views-field-count").a['href']
-
-            if dryrun:
-                print(comp)
-                continue
-            raise ImplementationError("Not yet implemented")
-
-        return ins, upd, skip
-
     def load(self, category: str, keys: str = None, force: bool = False, dryrun: bool = False,
              **kwargs) -> None:
         """
@@ -278,6 +258,64 @@ class RefdataCLMU(Refdata):
             return range(int(m.group(1)), int(m.group(2)) + 1)
         else:
             return keys.split(',')
+
+    def load_composer(self, data: SegData, dryrun: bool = False) -> tuple[int, int, int]:
+        """Return tuple of record counts: [inserted, updated, skipped].
+        """
+        assert isinstance(data, BeautifulSoup)
+        ins  = 0
+        upd  = 0
+        skip = 0
+        soup = data
+        content = soup.select_one("div.view-content")
+        for tr in content.select("tbody tr"):
+            comp = tr.select_one("td.views-field-name").string.strip()
+            link = tr.select_one("td.views-field-count").a['href']
+            meta = {}
+
+            # Rule 1 - match any of the following line endings (will be added to person
+            # metainfo as "floruit"):
+            #   ", fl. 1971"
+            #   ", fl. 1430-1439"
+            #   " fl. 1675"
+            #   " fl. 1698-1698"
+            #
+            # Note that we are not enforcing exactly 4 digits per year, to allow for
+            # variability
+            rule1 = r'(.+?),? fl\. ([0-9-]+(\-[0-9]+)?)'
+
+            # Rule 2 - match any of the following line endings (will be added to person
+            # metainfo as "dates"):
+            #   ", 1971-"
+            #   ", 1430-1439"
+            #   " 1975-"
+            #   " 1698-1698"
+            #
+            # Same as above regarding date formatting (though this rule only recognizes
+            # dates as years)
+            rule2 = r'(.+?),? (([0-9-]+)\-([0-9]+)?)'
+
+            if m := re.fullmatch(rule1, comp):
+                comp_name = m.group(1)
+                meta['floruit'] = m.group(2)
+            elif m := re.fullmatch(rule2, comp):
+                comp_name = m.group(1)
+                meta['dates'] = m.group(2)
+                meta['born'] = m.group(3)
+                if m.group(4):
+                    meta['died'] = m.group(4)
+            else:
+                comp_name = comp
+
+            if link:
+                meta['clmu_link'] = link
+
+            if dryrun:
+                print(comp_name, meta)
+                continue
+            raise ImplementationError("Not yet implemented")
+
+        return ins, upd, skip
 
 ################
 # RefdataIMSLP #
