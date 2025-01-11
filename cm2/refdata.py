@@ -259,6 +259,78 @@ class RefdataCLMU(Refdata):
         else:
             return keys.split(',')
 
+    def parse_comp_name(self, comp_name: str) -> tuple[int, str]:
+        """
+        """
+        TITLES           = []
+        TITLES_CI        = []
+        LAST_PREFIXES    = ['de', 'da', 'del', 'van', 'von', 'van der']
+        LAST_PREFIXES_CI = ['de', 'da', 'del', 'van', 'von', 'van der']
+        SUFFIXES         = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
+                            'Jr.', 'Sr.', 'the Elder', 'the Younger', 'El Viejo', 'El Joven']
+        SUFFIXES_CI      = ['jr.', 'sr.', 'the elder', 'the younger', 'el viejo', 'el joven',
+                            'le père', 'le fils', 'père', 'fils']
+
+        title       = None
+        last_prefix = None
+        suffix      = None
+
+        pieces = comp_name.split(', ')
+        if len(pieces) >= 3:
+            if pieces[0] in LAST_PREFIXES or pieces[0].lower() in LAST_PREFIXES_CI:
+                assert not last_prefix
+                last_prefix = pieces.pop(0)
+
+        # name suffix can come from the end, just after the last name
+        if len(pieces) > 1:
+            if pieces[-1] in SUFFIXES or pieces[-1].lower() in SUFFIXES_CI:
+                assert not suffix
+                suffix = pieces.pop(-1)
+            if pieces[1] in SUFFIXES or pieces[1].lower() in SUFFIXES_CI:
+                assert not suffix
+                suffix = pieces.pop(1)
+
+        new_name = ', '.join(pieces)
+        if len(pieces) >= 3:
+            # return should indicate that name was not successfully parsed
+            return 0, new_name
+
+        if len(pieces) == 1:
+            # REVISIT: should we be parsing new_name on whitespace (e.g. "name
+            # (alias)")???
+            cat = 1 if new_name == comp_name else 2
+            return cat, new_name
+
+        assert len(pieces) == 2
+        assert len(pieces[0]) > 0
+        assert len(pieces[1]) > 0
+        last_pieces = pieces[0].split(' ')
+        first_pieces = pieces[1].split(' ')
+
+        # FIX: this does not work for prefixes with embedded spaces!!!
+        if last_pieces[0] in LAST_PREFIXES:
+            assert not last_prefix
+            last_prefix = last_pieces.pop(0)
+        if first_pieces[-1] in LAST_PREFIXES:
+            assert not last_prefix
+            last_prefix = first_pieces.pop(-1)
+
+        assert last_pieces or first_pieces
+        if not last_pieces:
+            new_name = ' '.join(first_pieces)
+            return 3, new_name
+        if not first_pieces:
+            new_name = ' '.join(last_pieces)
+            return 4, new_name
+
+        # TODO: construct first_name and middle_name from first_pieces!!!
+        #   - if leading elements (2+) are r'[A-Z]\.' then join (with ' ')
+        #   - then first_name = first_pieces[0], middle_name = first_pieces[1:]
+
+        new_name = ' '.join(last_pieces) + ', ' + ' '.join(first_pieces)
+        cat = 5 if new_name == comp_name else 6
+        return cat, new_name
+
     def load_composer(self, data: SegData, dryrun: bool = False) -> tuple[int, int, int]:
         """Return tuple of record counts: [inserted, updated, skipped].
         """
@@ -307,11 +379,19 @@ class RefdataCLMU(Refdata):
             else:
                 comp_name = comp
 
+            # structural fixup for comp_name: fix embedded and trailing commas; try and be
+            # as specific as possible initially (can broaden as needed, based on anomalies)
+            comp_name = re.sub(r'(\pL)\,(\pL)', r'\1, \2', comp_name)
+            if comp_name[-1] == ',':
+                comp_name = comp_name.rstrip(',')
+
             if link:
                 meta['clmu_link'] = link
 
+            cat, new_name = self.parse_comp_name(comp_name)
             if dryrun:
-                print(comp_name, meta)
+                print(f"CAT {cat}: {new_name}")
+                #print(new_name, meta)
                 continue
             raise ImplementationError("Not yet implemented")
 

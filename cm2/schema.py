@@ -58,26 +58,55 @@ class Person(BaseModel):
         )
 
 ##############
+# PersonMeta #
+##############
+
+class PersonMeta(BaseModel):
+    """Represents metainformation (additional field values) for a person
+    """
+    person        = ForeignKeyField(Person, backref='person_metas')
+    key           = TextField()
+    value         = TextField(null=True)
+    source        = TextField(null=True)
+    source_date   = DateField(null=True)
+    person_res    = TextField(null=True)
+
+    class Meta:
+        indexes = (
+            # REVISIT: should we add source_date (otherwise need to think about conflict
+            # handling logic)!!!
+            (('person', 'key', 'source'), True),
+        )
+
+##############
 # PersonName #
 ##############
 
 class PersonName(BaseModel):
     """Represents a person name
     """
-    name          = TextField(unique=True)
+    name_str      = TextField()            # raw name string (no fixup)
+    person_name   = TextField()            # same as `name_str` if no `addl_info`
     addl_info     = TextField(null=True)
     source        = TextField(null=True)
     source_date   = DateField(null=True)
-    sources       = JSONField(default=[])  # JSON array of (source, source_date) tuples
     metainfo      = JSONField(default={})  # JSON object of key-value pairs
     person        = ForeignKeyField(Person, null=True, backref='person_names')
     person_res    = TextField(null=True)
+
+    class Meta:
+        indexes = (
+            # REVISIT: should we add source_date (otherwise need to think about conflict
+            # handling logic)!!!
+            (('name_str', 'source'), True),
+        )
 
 ##########
 # create #
 ##########
 
 ALL_MODELS = [Person,
+              PersonMeta,
               PersonName]
 
 def create(models: list[str] | str = 'all', force: bool = False, **kwargs) -> None:
