@@ -276,12 +276,15 @@ class RefdataCLMU(Refdata):
         suffix      = None
 
         pieces = comp_name.split(', ')
+
+        # only look for last name prefix if 3 or more pieces, to guard against the case
+        # where last name is a case-insensiive match (e.g. "Van, Jeffrey")
         if len(pieces) >= 3:
             if pieces[0] in LAST_PREFIXES or pieces[0].lower() in LAST_PREFIXES_CI:
                 assert not last_prefix
                 last_prefix = pieces.pop(0)
 
-        # name suffix can come from the end, just after the last name
+        # name suffix can come from the end, or just after the last name
         if len(pieces) > 1:
             if pieces[-1] in SUFFIXES or pieces[-1].lower() in SUFFIXES_CI:
                 assert not suffix
@@ -291,13 +294,14 @@ class RefdataCLMU(Refdata):
                 suffix = pieces.pop(1)
 
         new_name = ', '.join(pieces)
+
         if len(pieces) >= 3:
-            # return should indicate that name was not successfully parsed
+            # don't know how to parse from here, so will have to be manually rectified
             return 0, new_name
 
         if len(pieces) == 1:
-            # REVISIT: should we be parsing new_name on whitespace (e.g. "name
-            # (alias)")???
+            # REVISIT: may want to try parsing single piece on whitespace (e.g. "name
+            # (alias)")!
             cat = 1 if new_name == comp_name else 2
             return cat, new_name
 
@@ -307,13 +311,22 @@ class RefdataCLMU(Refdata):
         last_pieces = pieces[0].split(' ')
         first_pieces = pieces[1].split(' ')
 
-        # FIX: this does not work for prefixes with embedded spaces!!!
+        # look for last name prefix in the leading portion of last_pieces or the trailing
+        # portion of first_pieces; this is very not pretty, but we hardwire the ability to
+        # look for one and two word strings
         if last_pieces[0] in LAST_PREFIXES:
             assert not last_prefix
             last_prefix = last_pieces.pop(0)
+        elif ' '.join(last_pieces[:2]) in LAST_PREFIXES:
+            assert not last_prefix
+            last_prefix = last_pieces.pop(0) + ' ' + last_pieces.pop(0)
+
         if first_pieces[-1] in LAST_PREFIXES:
             assert not last_prefix
             last_prefix = first_pieces.pop(-1)
+        elif ' '.join(first_pieces[-2:]) in LAST_PREFIXES:
+            assert not last_prefix
+            last_prefix = first_pieces.pop(-2) + ' ' + first_pieces.pop(-1)
 
         assert last_pieces or first_pieces
         if not last_pieces:
@@ -323,9 +336,13 @@ class RefdataCLMU(Refdata):
             new_name = ' '.join(last_pieces)
             return 4, new_name
 
-        # TODO: construct first_name and middle_name from first_pieces!!!
-        #   - if leading elements (2+) are r'[A-Z]\.' then join (with ' ')
-        #   - then first_name = first_pieces[0], middle_name = first_pieces[1:]
+        # coelesce leading initials in first_pieces (e.g. "J. S." -> "J.S.")
+        if m := re.fullmatch(r'(\p{Lu}\.( \p{Lu}\.)+)(.*)', ' '.join(first_pieces)):
+            first_name = m.group(1).replace(' ', '')
+            first_pieces = [first_name]
+            if m.group(3):
+                middle_name = m.group(3).strip()
+                first_pieces.append(middle_name)
 
         new_name = ' '.join(last_pieces) + ', ' + ' '.join(first_pieces)
         cat = 5 if new_name == comp_name else 6
