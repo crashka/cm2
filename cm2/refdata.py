@@ -19,6 +19,7 @@ from peewee import IntegrityError
 
 from .core import (cfg, log, DataFile, ConfigError, ImplementationError, DFLT_CHARSET,
                    DFLT_FETCH_INT, DFLT_HTML_PARSER)
+from .dbcore import now_str
 from .schema import Person, PersonMeta, PersonName, Conflict
 
 REFDATA_DIR  = 'refdata'
@@ -36,7 +37,7 @@ class LoadCtx(NamedTuple):
     """
     """
     file:   str        # full pathname
-    source:  str       # name of refdata class
+    source:  str       # refdata source name (config key)
     source_date: date  # datestamp of the data
 
 SegData = BeautifulSoup | dict
@@ -471,11 +472,16 @@ class RefdataCLMU(Refdata):
             if not comp_person:
                 skip += 1
                 continue
+            new_comp = None
+            now_ts = now_str()  # use same timestamp for everything here
             try:
                 comp_person.is_composer = True
                 comp_person.source = ctx.source
                 comp_person.source_date = str(ctx.source_date)
+                comp_person.created_at = now_ts
+                comp_person.updated_at = now_ts
                 comp_person.save()
+                new_comp = True
                 ins += 1
             except IntegrityError as e:
                 person_data = dict(comp_person.__data__)
@@ -483,11 +489,66 @@ class RefdataCLMU(Refdata):
                 log.info(f"Conflict saving Person: {person_data}")
                 Conflict.create(entity_name=comp_person.__class__.__name__,
                                 entity_def=person_data)
+
+                comp_person = Person.get((Person.name == comp_person.name) &
+                                         (Person.disamb == comp_person.disamb))
                 # FIX: not really updating, but separate this case from unparseable!!!
+                # note that we fall through here so that we can (possibly) add new
+                # person_names
+                new_comp = False
                 upd += 1
+
+            try:
+                PersonName.create(name_str=comp,
+                                  source=ctx.source,
+                                  source_date=str(ctx.source_date),
+                                  person=comp_person,
+                                  person_res='load_composer',
+                                  created_at=now_ts,
+                                  updated_at=now_ts)
+            except IntegrityError as e:
+                log.info(f"Duplicate PersonName '{comp}' (0)")
+
+            if not new_comp:
                 continue
 
-            # TODO: insert PersonMeta and PersonName records!!!
+            if comp_name != comp:
+                try:
+                    PersonName.create(name_str=comp_name,
+                                      source=ctx.source,
+                                      source_date=str(ctx.source_date),
+                                      person=comp_person,
+                                      person_res='load_composer',
+                                      created_at=now_ts,
+                                      updated_at=now_ts)
+                except IntegrityError as e:
+                    log.info(f"Duplicate PersonName '{comp_name}' (1)")
+
+            meta_items = []
+            for k, v in meta.items():
+                meta_items.append({'person':      comp_person.id,
+                                   'key':         k,
+                                   'value':       v,
+                                   'source':      ctx.source,
+                                   'source_date': str(ctx.source_date),
+                                   'created_at':  now_ts,
+                                   'updated_at':  now_ts})
+            PersonMeta.insert_many(meta_items).execute()
+
+            for i, name_str in enumerate([comp_person.name, comp_person.alt_name]):
+                if not name_str or name_str == comp_name:
+                    continue
+                try:
+                    PersonName.create(name_str=name_str,
+                                      source=ctx.source,
+                                      source_date=str(ctx.source_date),
+                                      person=comp_person,
+                                      person_res='load_composer',
+                                      created_at=now_ts,
+                                      updated_at=now_ts)
+                except IntegrityError as e:
+                    log.info(f"Duplicate PersonName '{name_str}' ({i+2})")
+                    pass
 
         return ins, upd, skip
 

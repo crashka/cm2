@@ -21,9 +21,9 @@ ALT_NAME_COMPS = ['last_name', 'suffix', 'title', 'first_name', 'middle_name', '
 class Person(BaseModel):
     """Represents a person
     """
-    name          = TextField()           # same as full_name
+    name          = TextField()           # defaults to full_name
     disamb        = TextField(default='')
-    alt_name      = TextField(null=True)  # leading with last name
+    alt_name      = TextField(null=True)  # generally leads with last name
 
     # name components ("generally" normalized)
     title         = TextField(null=True)
@@ -59,8 +59,9 @@ class Person(BaseModel):
             (('name', 'disamb'), True),
         )
 
-    def get_full_name(self) -> str:
-        """ Note that this return empty string if no name components.
+    @property
+    def full_name(self) -> str:
+        """ Construct full name from individual name components.
         """
         comps = [getattr(self, x) for x in NAME_COMPS if getattr(self, x)]
         # add comma before name suffix, if exists
@@ -69,8 +70,8 @@ class Person(BaseModel):
             comps[-2] += ','
         return ' '.join(comps)
 
-    def get_alt_name(self) -> str:
-        """ Note that this return empty string if no name components.
+    def mk_alt_name(self) -> str:
+        """ Alternate construction of person's name, leading with last name.
         """
         comps = [getattr(self, x) for x in ALT_NAME_COMPS if getattr(self, x)]
         # add comma after last name, or suffix (if exists)
@@ -83,9 +84,9 @@ class Person(BaseModel):
 
     def save(self, *args, **kwargs):
         if not self.name:
-            self.name = self.get_full_name()
+            self.name = self.full_name
         if not self.alt_name:
-            alt_name = self.get_alt_name()
+            alt_name = self.mk_alt_name()
             if alt_name != self.name:
                 self.alt_name = alt_name
         return super().save(*args, **kwargs)
@@ -102,7 +103,6 @@ class PersonMeta(BaseModel):
     value         = TextField(null=True)
     source        = TextField(null=True)
     source_date   = DateField(null=True)
-    person_res    = TextField(null=True)
 
     class Meta:
         indexes = (
@@ -119,11 +119,8 @@ class PersonName(BaseModel):
     """Represents a person name
     """
     name_str      = TextField()            # raw name string (no fixup)
-    person_name   = TextField()            # same as `name_str` if no `addl_info`
-    addl_info     = TextField(null=True)   # parsed out of `name_str`
     source        = TextField(null=True)
     source_date   = DateField(null=True)
-    metainfo      = JSONField(default={})  # REVISIT: remove this?!?!?!
     person        = ForeignKeyField(Person, null=True, backref='person_names')
     person_res    = TextField(null=True)   # person resolution mechanism (or process?)
 
