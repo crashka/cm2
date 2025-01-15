@@ -5,18 +5,21 @@
 
 import json
 from collections.abc import Generator, Iterable
-from typing import TextIO
+from typing import TextIO, NamedTuple
+from datetime import date
 from time import sleep
 from glob import glob
 from importlib import import_module
+import os
 
 import regex as re
 import requests
 from bs4 import BeautifulSoup
+from peewee import IntegrityError
 
 from .core import (cfg, log, DataFile, ConfigError, ImplementationError, DFLT_CHARSET,
                    DFLT_FETCH_INT, DFLT_HTML_PARSER)
-
+from .schema import Person, PersonMeta, PersonName, Conflict
 
 REFDATA_DIR  = 'refdata'
 BASE_CFG_KEY = 'refdata_base'
@@ -28,6 +31,13 @@ sources      = cfg.config(SOURCES_KEY)
 ###############
 # RefdataBase #
 ###############
+
+class LoadCtx(NamedTuple):
+    """
+    """
+    file:   str        # full pathname
+    source:  str       # name of refdata class
+    source_date: date  # datestamp of the data
 
 SegData = BeautifulSoup | dict
 
@@ -230,7 +240,9 @@ class Refdata:
         load_func = getattr(self, loader)
 
         for file, data in self.read_segs(category, keys):
-            ins, upd, skip = load_func(data, dryrun)
+            file_mtime = os.stat(file).st_mtime
+            ctx = LoadCtx(file, self.name, date.fromtimestamp(file_mtime))
+            ins, upd, skip = load_func(ctx, data, dryrun)
             log.info(f"Load from {file}: {ins} inserted, {upd} updated, {skip} skipped")
 
 ###############
@@ -259,51 +271,52 @@ class RefdataCLMU(Refdata):
         else:
             return keys.split(',')
 
-    def parse_comp_name(self, comp_name: str) -> tuple[int, str]:
+    def parse_comp_name(self, comp_name: str) -> Person | None:
         """
         """
-        TITLES           = []
+        TITLES           = ['Sir']
         TITLES_CI        = []
-        LAST_PREFIXES    = ['de', 'da', 'del', 'van', 'von', 'van der']
+        LAST_PREFIXES    = ['de', 'da', 'del', 'van', 'von', 'van der', 'of', 'di']
         LAST_PREFIXES_CI = ['de', 'da', 'del', 'van', 'von', 'van der']
         SUFFIXES         = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
                             'Jr.', 'Sr.', 'the Elder', 'the Younger', 'El Viejo', 'El Joven']
         SUFFIXES_CI      = ['jr.', 'sr.', 'the elder', 'the younger', 'el viejo', 'el joven',
                             'le père', 'le fils', 'père', 'fils']
 
-        title       = None
-        last_prefix = None
-        suffix      = None
-
+        person = Person()
         pieces = comp_name.split(', ')
 
         # only look for last name prefix if 3 or more pieces, to guard against the case
         # where last name is a case-insensiive match (e.g. "Van, Jeffrey")
         if len(pieces) >= 3:
             if pieces[0] in LAST_PREFIXES or pieces[0].lower() in LAST_PREFIXES_CI:
-                assert not last_prefix
-                last_prefix = pieces.pop(0)
+                assert not person.last_prefix
+                person.last_prefix = pieces.pop(0)
 
         # name suffix can come from the end, or just after the last name
         if len(pieces) > 1:
             if pieces[-1] in SUFFIXES or pieces[-1].lower() in SUFFIXES_CI:
-                assert not suffix
-                suffix = pieces.pop(-1)
+                assert not person.suffix
+                person.suffix = pieces.pop(-1)
             if pieces[1] in SUFFIXES or pieces[1].lower() in SUFFIXES_CI:
-                assert not suffix
-                suffix = pieces.pop(1)
-
-        new_name = ', '.join(pieces)
+                assert not person.suffix
+                person.suffix = pieces.pop(1)
 
         if len(pieces) >= 3:
-            # don't know how to parse from here, so will have to be manually rectified
-            return 0, new_name
+            # don't know how to parse from here, so will have to be manually rectified;
+            # any parsing done above is discarded
+            return None
 
         if len(pieces) == 1:
             # REVISIT: may want to try parsing single piece on whitespace (e.g. "name
             # (alias)")!
-            cat = 1 if new_name == comp_name else 2
-            return cat, new_name
+            if person.last_prefix:
+                assert not person.last_name
+                person.last_name = pieces.pop(0)
+            else:
+                assert not person.first_name
+                person.first_name = pieces.pop(0)
+            return person
 
         assert len(pieces) == 2
         assert len(pieces[0]) > 0
@@ -311,44 +324,87 @@ class RefdataCLMU(Refdata):
         last_pieces = pieces[0].split(' ')
         first_pieces = pieces[1].split(' ')
 
+        # title (if present) is usually at the leading edge of first_pieces, but may also
+        # be represented as the entirety of first_pieces (in which case we will do our
+        # best shot at parsing out the first name from last_pieces)
+        if first_pieces[0] in TITLES:
+            assert not person.title
+            person.title = first_pieces.pop(0)
+            if not first_pieces:
+                first_pieces.append(last_pieces.pop(0))
+
         # look for last name prefix in the leading portion of last_pieces or the trailing
         # portion of first_pieces; this is very not pretty, but we hardwire the ability to
         # look for one and two word strings
         if last_pieces[0] in LAST_PREFIXES:
-            assert not last_prefix
-            last_prefix = last_pieces.pop(0)
+            assert not person.last_prefix
+            person.last_prefix = last_pieces.pop(0)
         elif ' '.join(last_pieces[:2]) in LAST_PREFIXES:
-            assert not last_prefix
-            last_prefix = last_pieces.pop(0) + ' ' + last_pieces.pop(0)
+            assert not person.last_prefix
+            person.last_prefix = last_pieces.pop(0) + ' ' + last_pieces.pop(0)
 
         if first_pieces[-1] in LAST_PREFIXES:
-            assert not last_prefix
-            last_prefix = first_pieces.pop(-1)
+            assert not person.last_prefix
+            person.last_prefix = first_pieces.pop(-1)
         elif ' '.join(first_pieces[-2:]) in LAST_PREFIXES:
-            assert not last_prefix
-            last_prefix = first_pieces.pop(-2) + ' ' + first_pieces.pop(-1)
+            assert not person.last_prefix
+            person.last_prefix = first_pieces.pop(-2) + ' ' + first_pieces.pop(-1)
 
+        # there is also the case where a last_prefix/last_name sequence is preceded by a
+        # comma (e.g. "Hildegard, of Bingen"), more like a suffix representation; for
+        # consistency, we will swap the parts and parse as above
+
+        if first_pieces[0] in LAST_PREFIXES:
+            last_pieces, first_pieces = first_pieces, last_pieces
+            assert not person.last_prefix
+            person.last_prefix = last_pieces.pop(0)
+        elif ' '.join(first_pieces[:2]) in LAST_PREFIXES:
+            last_pieces, first_pieces = first_pieces, last_pieces
+            assert not person.last_prefix
+            person.last_prefix = last_pieces.pop(0) + ' ' + last_pieces.pop(0)
+
+        # first handle cases of only one name field remaining (either last or first)
         assert last_pieces or first_pieces
         if not last_pieces:
-            new_name = ' '.join(first_pieces)
-            return 3, new_name
+            if person.last_prefix:
+                # treat first_pieces as last name
+                assert not person.last_name
+                person.last_name = ' '.join(first_pieces)
+            else:
+                assert not person.first_name
+                person.first_name = ' '.join(first_pieces)
+            return person
         if not first_pieces:
-            new_name = ' '.join(last_pieces)
-            return 4, new_name
+            assert not person.last_name
+            person.last_name = ' '.join(last_pieces)
+            return person
 
-        # coelesce leading initials in first_pieces (e.g. "J. S." -> "J.S.")
-        if m := re.fullmatch(r'(\p{Lu}\.( \p{Lu}\.)+)(.*)', ' '.join(first_pieces)):
-            first_name = m.group(1).replace(' ', '')
-            first_pieces = [first_name]
-            if m.group(3):
-                middle_name = m.group(3).strip()
-                first_pieces.append(middle_name)
+        # now handle cases where we have to decide where stuff goes
+        assert last_pieces and first_pieces
+        if len(first_pieces) > 1:
+            # coelesce leading initials in first_pieces (e.g. "J. S." -> "J.S.")
+            if m := re.fullmatch(r'(\p{Lu}\.( \p{Lu}\.)+)(.*)', ' '.join(first_pieces)):
+                assert not person.first_name
+                person.first_name = m.group(1).replace(' ', '')
+                if m.group(3):
+                    # leftovers form the middle name
+                    assert not person.middle_name
+                    person.middle_name = m.group(3).strip()
+            else:
+                assert not person.first_name
+                assert not person.middle_name
+                person.first_name = first_pieces.pop(0)
+                person.middle_name = ' '.join(first_pieces)
+        else:
+            assert not person.first_name
+            person.first_name = first_pieces.pop(0)
 
-        new_name = ' '.join(last_pieces) + ', ' + ' '.join(first_pieces)
-        cat = 5 if new_name == comp_name else 6
-        return cat, new_name
+        assert not person.last_name
+        person.last_name = ' '.join(last_pieces)
+        return person
 
-    def load_composer(self, data: SegData, dryrun: bool = False) -> tuple[int, int, int]:
+    def load_composer(self, ctx: LoadCtx, data: SegData,
+                      dryrun: bool = False) -> tuple[int, int, int]:
         """Return tuple of record counts: [inserted, updated, skipped].
         """
         assert isinstance(data, BeautifulSoup)
@@ -405,12 +461,33 @@ class RefdataCLMU(Refdata):
             if link:
                 meta['clmu_link'] = link
 
-            cat, new_name = self.parse_comp_name(comp_name)
+            comp_person = self.parse_comp_name(comp_name)
             if dryrun:
-                print(f"CAT {cat}: {new_name}")
-                #print(new_name, meta)
+                full_name = comp_person.full_name if comp_person else '[UNPARSED]'
+                print(f"{comp_name} => {full_name}")
+                #print(comp_name, meta)
                 continue
-            raise ImplementationError("Not yet implemented")
+
+            if not comp_person:
+                skip += 1
+                continue
+            try:
+                comp_person.is_composer = True
+                comp_person.source = ctx.source
+                comp_person.source_date = str(ctx.source_date)
+                comp_person.save()
+                ins += 1
+            except IntegrityError as e:
+                person_data = dict(comp_person.__data__)
+                person_data['meta'] = meta
+                log.info(f"Conflict saving Person: {person_data}")
+                Conflict.create(entity_name=comp_person.__class__.__name__,
+                                entity_def=person_data)
+                # FIX: not really updating, but separate this case from unparseable!!!
+                upd += 1
+                continue
+
+            # TODO: insert PersonMeta and PersonName records!!!
 
         return ins, upd, skip
 
@@ -485,15 +562,16 @@ def main() -> int:
 
     where:
 
-      - <key(s)> is either a single letter (indicating the initial letter of the name), a
-        comma-separated list of letters, or a letter range (designated by start-end); all
-        entries are assumed if `keys` is omitted
+      - <key(s)> is either a single key (typically the initial letter of the name, but can
+        be a results page number for some sources), a comma-separated list of keys, or a
+        key range (designated by start-end); all entries are assumed if `keys` is omitted
 
       - `force` (optional, default false) indicates that existing entries should be
         overwritten
 
       - `dryrun` (optional, default false) indicates that writes to files or database are
          not performed (would-be actions are printed to stdout instead)
+
     """
     if len(sys.argv) < 4:
         print(f"Insufficient arguments specified", file=sys.stderr)

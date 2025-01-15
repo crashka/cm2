@@ -14,14 +14,16 @@ from .dbcore import db, BaseModel
 # Person #
 ##########
 
+# Note: "comp" in this module means component (not composer)
+NAME_COMPS     = ['title', 'first_name', 'middle_name', 'last_prefix', 'last_name', 'suffix']
+ALT_NAME_COMPS = ['last_name', 'suffix', 'title', 'first_name', 'middle_name', 'last_prefix']
+
 class Person(BaseModel):
     """Represents a person
     """
-    name          = TextField(null=True)  # display value
-    disamb        = TextField(null=True, default='')
-    raw_name      = TextField(null=True)  # REVISIT: do we really need this???
-    full_name     = TextField(null=True)  # assembled from normalized name components
-    alt_name      = TextField(null=True)  # PLACEHOLDER: not sure what this means yet!!!
+    name          = TextField()           # same as full_name
+    disamb        = TextField(default='')
+    alt_name      = TextField(null=True)  # leading with last name
 
     # name components ("generally" normalized)
     title         = TextField(null=True)
@@ -57,6 +59,37 @@ class Person(BaseModel):
             (('name', 'disamb'), True),
         )
 
+    def get_full_name(self) -> str:
+        """ Note that this return empty string if no name components.
+        """
+        comps = [getattr(self, x) for x in NAME_COMPS if getattr(self, x)]
+        # add comma before name suffix, if exists
+        if self.suffix:
+            assert len(comps) > 1
+            comps[-2] += ','
+        return ' '.join(comps)
+
+    def get_alt_name(self) -> str:
+        """ Note that this return empty string if no name components.
+        """
+        comps = [getattr(self, x) for x in ALT_NAME_COMPS if getattr(self, x)]
+        # add comma after last name, or suffix (if exists)
+        if self.last_name and len(comps) > 1:
+            if not self.suffix:
+                comps[0] += ','
+            elif self.suffix and len(comps) > 2:
+                comps[1] += ','
+        return ' '.join(comps)
+
+    def save(self, *args, **kwargs):
+        if not self.name:
+            self.name = self.get_full_name()
+        if not self.alt_name:
+            alt_name = self.get_alt_name()
+            if alt_name != self.name:
+                self.alt_name = alt_name
+        return super().save(*args, **kwargs)
+
 ##############
 # PersonMeta #
 ##############
@@ -87,12 +120,12 @@ class PersonName(BaseModel):
     """
     name_str      = TextField()            # raw name string (no fixup)
     person_name   = TextField()            # same as `name_str` if no `addl_info`
-    addl_info     = TextField(null=True)
+    addl_info     = TextField(null=True)   # parsed out of `name_str`
     source        = TextField(null=True)
     source_date   = DateField(null=True)
-    metainfo      = JSONField(default={})  # JSON object of key-value pairs
+    metainfo      = JSONField(default={})  # REVISIT: remove this?!?!?!
     person        = ForeignKeyField(Person, null=True, backref='person_names')
-    person_res    = TextField(null=True)
+    person_res    = TextField(null=True)   # person resolution mechanism (or process?)
 
     class Meta:
         indexes = (
@@ -101,13 +134,32 @@ class PersonName(BaseModel):
             (('name_str', 'source'), True),
         )
 
+############
+# Conflict #
+############
+
+class Conflict(BaseModel):
+    """Represents entity conflicts (on unique keys) to be resolved
+    """
+    entity_name = TextField()  # raw name string (no fixup)
+    entity_def  = JSONField()  # JSON object of entity attributes (including metainfo)
+    status      = TextField(default='open')  # 'open', 'in process, 'resolved', 'withdrawn'
+    parent_id   = IntegerField(null=True)    # id of parent (resolved to) record
+
+    class Meta:
+        indexes = (
+            # guard against duplicate records
+            (('entity_name', 'entity_def'), True),
+        )
+
 ##########
 # create #
 ##########
 
 ALL_MODELS = [Person,
               PersonMeta,
-              PersonName]
+              PersonName,
+              Conflict]
 
 def create(models: list[str] | str = 'all', force: bool = False, **kwargs) -> None:
     """Create tables for the specified schema models.
@@ -145,7 +197,7 @@ def create(models: list[str] | str = 'all', force: bool = False, **kwargs) -> No
                 log.info(f"Re-created table {model._meta.table_name}")
             else:
                 raise
-    
+
 ########
 # main #
 ########
@@ -162,11 +214,11 @@ def main() -> int:
       $ python -m schema <action> [<arg>=<val> [...]]
 
     Actions (and associated arguments):
-    
+
       - create models=<models> force=<bool>
 
     where:
-    
+
       - <models> is a comma-separate list of model names (case-sensitive), or 'all'
       - `force` (optional) is false by default
 

@@ -19,6 +19,15 @@ if not db_config or SQLITE_KEY not in db_config:
     raise ConfigError("'{DB_KEY}' or '{SQLITE_KEY}' not found in config file")
 SQLITE = db_config.get(SQLITE_KEY)
 
+#####################
+# Utility Functions #
+#####################
+
+def now_str() -> str:
+    """ Need this to make model objects serializable as JSON
+    """
+    return str(datetime.now())
+
 #############
 # BaseModel #
 #############
@@ -36,11 +45,11 @@ class BaseModel(Model):
     """Base model for this module, with defaults and system columns
     """
     # system columns
-    created_at    = DateTimeField(default=datetime.now)
+    created_at    = DateTimeField(default=now_str)
     updated_at    = DateTimeField()
 
     def save(self, *args, **kwargs):
-        self.updated_at = datetime.now()
+        self.updated_at = now_str()
         return super().save(*args, **kwargs)
 
     class Meta:
