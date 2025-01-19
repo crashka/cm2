@@ -20,7 +20,7 @@ from peewee import IntegrityError
 from .core import (cfg, log, DataFile, ConfigError, ImplementationError, DFLT_CHARSET,
                    DFLT_FETCH_INT, DFLT_HTML_PARSER)
 from .dbcore import now_str
-from .schema import Person, PersonMeta, PersonName, Conflict
+from .schema import Person, PersonMeta, PersonName, Work, WorkMeta, WorkName, Conflict
 
 REFDATA_DIR  = 'refdata'
 BASE_CFG_KEY = 'refdata_base'
@@ -417,7 +417,10 @@ class RefdataCLMU(Refdata):
         for tr in content.select("tbody tr"):
             comp = tr.select_one("td.views-field-name").string.strip()
             link = tr.select_one("td.views-field-count").a['href']
-            meta = {}
+            comp_name = None
+            addl_info = None
+            alt_comp  = None
+            meta      = {}
 
             # Rule 1 - match any of the following line endings (will be added to person
             # metainfo as "floruit"):
@@ -428,7 +431,7 @@ class RefdataCLMU(Refdata):
             #
             # Note that we are not enforcing exactly 4 digits per year, to allow for
             # variability
-            rule1 = r'(.+?),? fl\. ([0-9-]+(\-[0-9]+)?)'
+            rule1 = r'(.+?)(,? fl\. ([0-9-]+(\-[0-9]+)?))'
 
             # Rule 2 - match any of the following line endings (will be added to person
             # metainfo as "dates"):
@@ -439,19 +442,31 @@ class RefdataCLMU(Refdata):
             #
             # Same as above regarding date formatting (though this rule only recognizes
             # dates as years)
-            rule2 = r'(.+?),? (([0-9-]+)\-([0-9]+)?)'
+            rule2 = r'(.+?)(,? (([0-9-]+)\-([0-9]+)?))'
 
             if m := re.fullmatch(rule1, comp):
                 comp_name = m.group(1)
-                meta['floruit'] = m.group(2)
+                addl_info = m.group(2)
+                meta['floruit'] = m.group(3)
             elif m := re.fullmatch(rule2, comp):
                 comp_name = m.group(1)
-                meta['dates'] = m.group(2)
-                meta['born'] = m.group(3)
-                if m.group(4):
-                    meta['died'] = m.group(4)
+                addl_info = m.group(2)
+                meta['dates'] = m.group(3)
+                meta['born'] = m.group(4)
+                if m.group(5):
+                    meta['died'] = m.group(5)
             else:
                 comp_name = comp
+
+            # source-specific processing for creating an alternate version of `comp`, if
+            # `addl_info` is present (basically, swap first two comma-delimited fields,
+            # omitting the intervening comma)
+            if addl_info:
+                pieces = comp_name.split(', ', 2)
+                if len(pieces) == 2:
+                    alt_comp = f"{pieces[1]} {pieces[0]}{addl_info}"
+                elif len(pieces) > 2:
+                    alt_comp = f"{pieces[1]} {pieces[0]}, {pieces[2]}{addl_info}"
 
             # structural fixup for comp_name: fix embedded and trailing commas; try and be
             # as specific as possible initially (can broaden as needed, based on anomalies)
@@ -490,12 +505,13 @@ class RefdataCLMU(Refdata):
                 Conflict.create(entity_name=comp_person.__class__.__name__,
                                 entity_def=person_data)
 
-                comp_person = Person.get((Person.name == comp_person.name) &
-                                         (Person.disamb == comp_person.disamb))
-                # FIX: not really updating, but separate this case from unparseable!!!
+                comp_person = Person.get(Person.name == comp_person.name,
+                                         Person.disamb == comp_person.disamb)
                 # note that we fall through here so that we can (possibly) add new
-                # person_names
+                # person_names or metadata (either of which would constitute an update)
                 new_comp = False
+                # FIX: we don't know if this is really an update yet, but for now just do
+                # this to distinguish from unparseable/skip!!!
                 upd += 1
 
             try:
@@ -506,7 +522,17 @@ class RefdataCLMU(Refdata):
                                   person_res='load_composer',
                                   created_at=now_ts,
                                   updated_at=now_ts)
+
+                if alt_comp:
+                    PersonName.create(name_str=alt_comp,
+                                      source=ctx.source,
+                                      source_date=str(ctx.source_date),
+                                      person=comp_person,
+                                      person_res='load_composer',
+                                      created_at=now_ts,
+                                      updated_at=now_ts)
             except IntegrityError as e:
+                # this presumes that only the first insert would fail this way
                 log.info(f"Duplicate PersonName '{comp}' (0)")
 
             if not new_comp:
@@ -549,6 +575,100 @@ class RefdataCLMU(Refdata):
                 except IntegrityError as e:
                     log.info(f"Duplicate PersonName '{name_str}' ({i+2})")
                     pass
+
+        return ins, upd, skip
+
+    def find_composer(self, ctx: LoadCtx, comp_name: str,
+                      id_only: bool = False) -> Person | int | None:
+        """
+        """
+        query = (PersonName
+                 .select()
+                 .join(Person)
+                 .where(PersonName.name_str == comp_name,
+                        PersonName.source == ctx.source,
+                        Person.is_composer == True))
+        pnames = list(query.execute())
+        if not pnames:
+            return None
+        assert len(pnames) == 1
+        return pnames[0].person_id if id_only else pnames[0].person
+
+    def load_work(self, ctx: LoadCtx, data: SegData, dryrun: bool = False) -> tuple[int, int, int]:
+        """Return tuple of record counts: [inserted, updated, skipped].
+        """
+        print(f"File: {ctx.file}")
+        assert isinstance(data, BeautifulSoup)
+        ins  = 0
+        upd  = 0
+        skip = 0
+        soup = data
+        content = soup.select_one("div.view-content")
+        for i, item_div in enumerate(content.select("div.lazr-browse-composition-item")):
+            title_div   = item_div.select_one("div.lazr-browse-composition-title")
+            compsr_div  = item_div.select_one("div.lazr-browse-composition-composer")
+            perfs_ul    = item_div.select_one("ul.lazr-browse-composition-performances")
+            title_span  = perfs_ul.li.find('span', attrs={'data-field': "real_title"})
+
+            item_title  = item_div['title']
+            genre       = item_div['genre']
+            composed    = item_div['composed']
+            title       = title_div.span.string.strip()
+            if title != item_title:
+                log.info(f"{title} != {item_title} ({ctx.file}:{i})")
+            if not compsr_div:
+                log.info(f"{item_title} has no composer div ({ctx.file}:{i})")
+                continue
+            compsr_name = compsr_div.span.string.strip()
+            real_title  = title_span.string.strip()
+
+            meta = {}
+            meta['short_title'] = title
+
+            composer = self.find_composer(ctx, compsr_name)
+            if not composer:
+                log.info(f"Composer name '{compsr_name}' not found, skipping work {real_title}")
+                continue
+            #work = self.parse_work_name(real_title)
+            if dryrun:
+                print(f"{composer.name}: {real_title}")
+                #print(f"{real_title} => {work.name}")
+                #print(comp_name, meta)
+                continue
+
+            work = Work()
+            work.composer = composer
+            if not work:
+                skip += 1
+                continue
+            new_work = None
+            now_ts = now_str()  # use same timestamp for everything here
+            try:
+                work.work_type   = genre
+                work.work_title  = real_title
+                work.work_date   = composed
+                work.source      = ctx.source
+                work.source_date = str(ctx.source_date)
+                work.created_at  = now_ts
+                work.updated_at  = now_ts
+                work.save()
+                new_work = True
+                ins += 1
+            except IntegrityError as e:
+                work_data = dict(work.__data__)
+                work_data['meta'] = meta
+                log.info(f"Conflict saving Work: {work_data}")
+                Conflict.create(entity_name=work.__class__.__name__,
+                                entity_def=work_data)
+
+                work = Work.get(Work.composer == work.composer,
+                                Work.name == work.name,
+                                Work.disamb == work.disamb)
+                # FIX: not really updating, but separate this case from unparseable!!!
+                # note that we fall through here so that we can (possibly) add new
+                # work_names
+                new_work = False
+                upd += 1
 
         return ins, upd, skip
 

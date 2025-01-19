@@ -70,7 +70,8 @@ class Person(BaseModel):
             comps[-2] += ','
         return ' '.join(comps)
 
-    def mk_alt_name(self) -> str:
+    @property
+    def alt_full_name(self) -> str:
         """ Alternate construction of person's name, leading with last name.
         """
         comps = [getattr(self, x) for x in ALT_NAME_COMPS if getattr(self, x)]
@@ -86,7 +87,7 @@ class Person(BaseModel):
         if not self.name:
             self.name = self.full_name
         if not self.alt_name:
-            alt_name = self.mk_alt_name()
+            alt_name = self.alt_full_name
             if alt_name != self.name:
                 self.alt_name = alt_name
         return super().save(*args, **kwargs)
@@ -118,11 +119,99 @@ class PersonMeta(BaseModel):
 class PersonName(BaseModel):
     """Represents a person name
     """
-    name_str      = TextField()            # raw name string (no fixup)
+    name_str      = TextField()           # raw name string (no fixup)
     source        = TextField(null=True)
     source_date   = DateField(null=True)
     person        = ForeignKeyField(Person, null=True, backref='person_names')
-    person_res    = TextField(null=True)   # person resolution mechanism (or process?)
+    person_res    = TextField(null=True)  # person resolution mechanism (or process?)
+
+    class Meta:
+        indexes = (
+            # REVISIT: should we add source_date (otherwise need to think about conflict
+            # handling logic)!!!
+            (('name_str', 'source'), True),
+        )
+
+########
+# Work #
+########
+
+class Work(BaseModel):
+    """Represents a composition
+    """
+    composer      = ForeignKeyField(Person, backref='works')
+    name          = TextField()           # defaults to full_name
+    disamb        = TextField(default='')
+    alt_name      = TextField(null=True)
+
+    # identifying components
+    work_type     = TextField(null=True)  # or "genre"
+    work_title    = TextField(null=True)  # includes ordinal, if any (e.g. "Symphony #4")
+    work_subtitle = TextField(null=True)  # includes nicknames (e.g. "Eroica")
+    work_key      = TextField(null=True)
+    work_date     = TextField(null=True)
+    catalog_no    = TextField(null=True)  # i.e. op., K., BWV, etc.
+
+    # NOTE: canonical record is assumed to be normalized and authoritative
+    is_canonical  = BooleanField(null=True)
+    cnl_person_id = ForeignKeyField('self', null=True, backref='aliases')  # points to self, if canonical
+
+    # reference info
+    source        = TextField(null=True)
+    source_date   = DateField(null=True)
+    notes         = TextField(null=True)
+
+    class Meta:
+        indexes = (
+            # REVISIT: should we add source_date (otherwise need to think about conflict
+            # handling logic)!!!
+            (('composer', 'name', 'disamb'), True),
+        )
+
+    @property
+    def full_name(self) -> str:
+        """ Construct full name from individual identifying components.
+        """
+        # TEMP: for now, full name is just work_title!!!
+        return self.work_title
+
+    def save(self, *args, **kwargs):
+        if not self.name:
+            self.name = self.full_name
+        return super().save(*args, **kwargs)
+
+############
+# WorkMeta #
+############
+
+class WorkMeta(BaseModel):
+    """Represents metainformation (additional field values) for a work (composition)
+    """
+    work          = ForeignKeyField(Work, backref='work_metas')
+    key           = TextField()
+    value         = TextField(null=True)
+    source        = TextField(null=True)
+    source_date   = DateField(null=True)
+
+    class Meta:
+        indexes = (
+            # REVISIT: should we add source_date (otherwise need to think about conflict
+            # handling logic)!!!
+            (('work', 'key', 'source'), True),
+        )
+
+##############
+# WorkName #
+##############
+
+class WorkName(BaseModel):
+    """Represents the string used to identify a work (composition)
+    """
+    name_str      = TextField()           # raw name string (no fixup)
+    source        = TextField(null=True)
+    source_date   = DateField(null=True)
+    work          = ForeignKeyField(Work, null=True, backref='person_names')
+    work_res      = TextField(null=True)  # work resolution mechanism (or process?)
 
     class Meta:
         indexes = (
@@ -156,7 +245,10 @@ class Conflict(BaseModel):
 ALL_MODELS = [Person,
               PersonMeta,
               PersonName,
-              Conflict]
+              Conflict,
+              Work,
+              WorkMeta,
+              WorkName]
 
 def create(models: list[str] | str = 'all', force: bool = False, **kwargs) -> None:
     """Create tables for the specified schema models.
