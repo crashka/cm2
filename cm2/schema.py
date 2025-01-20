@@ -8,6 +8,7 @@ from peewee import *
 from playhouse.sqlite_ext import *
 
 from .core import log
+from .langutils import norm
 from .dbcore import db, BaseModel
 
 ##########
@@ -120,7 +121,8 @@ class PersonName(BaseModel):
     """Represents a person name
     """
     name_str      = TextField()           # raw name string (no fixup)
-    source        = TextField(null=True)
+    name_str_norm = TextField(index=True)
+    source        = TextField(default='')
     source_date   = DateField(null=True)
     person        = ForeignKeyField(Person, null=True, backref='person_names')
     person_res    = TextField(null=True)  # person resolution mechanism (or process?)
@@ -131,6 +133,11 @@ class PersonName(BaseModel):
             # handling logic)!!!
             (('name_str', 'source'), True),
         )
+
+    def save(self, *args, **kwargs):
+        if 'name_str' in self._dirty:
+            self.name_str_norm = norm(self.name_str)
+        return super().save(*args, **kwargs)
 
 ########
 # Work #
@@ -208,7 +215,7 @@ class WorkName(BaseModel):
     """Represents the string used to identify a work (composition)
     """
     name_str      = TextField()           # raw name string (no fixup)
-    source        = TextField(null=True)
+    source        = TextField(default='')
     source_date   = DateField(null=True)
     work          = ForeignKeyField(Work, null=True, backref='person_names')
     work_res      = TextField(null=True)  # work resolution mechanism (or process?)

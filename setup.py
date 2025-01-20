@@ -18,6 +18,7 @@ setup(
                       'requests',
                       'beautifulsoup4',
                       'lxml',
+                      'unidecode',
                       'ckautils'],
     entry_points={
         'console_scripts': [

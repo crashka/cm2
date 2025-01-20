@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 
 """Module for fetching and loading reference data from external sources.
+
+Note that we are doing a lot of detailed source-specific processing, given empiricle
+patterns in the data, since we are only using sources we believe to be well-curated and
+generally consistent (though possibly quirky).  We are expecting that actual playlist data
+will be far less consistent, so will do more fuzzy matching when processing those.
 """
 
 import json
@@ -19,6 +24,7 @@ from peewee import IntegrityError
 
 from .core import (cfg, log, DataFile, ConfigError, ImplementationError, DFLT_CHARSET,
                    DFLT_FETCH_INT, DFLT_HTML_PARSER)
+from .langutils import norm
 from .dbcore import now_str
 from .schema import Person, PersonMeta, PersonName, Work, WorkMeta, WorkName, Conflict
 
@@ -84,8 +90,8 @@ class Refdata:
             refdata_class = getattr(module, class_name)
         else:
             refdata_class = globals()[class_name]
-        # ATTENTION: `refdata_class` and `cls` must be loaded from same module for this
-        # check to work!
+        # ATTENTION: refdata_class and cls must be loaded from same module for this check
+        # to work!
         if not issubclass(refdata_class, cls):
             raise ConfigError(f"'{refdata_class.__name__}' not subclass of '{cls.__name__}'")
 
@@ -149,7 +155,7 @@ class Refdata:
             if not self.valid_key(key):
                 raise RuntimeError(f"Invalid key '{key}' in \"{keys}\"")
 
-            # note that both `category` and `key` are in `TOKEN_VARS`
+            # note that both category and key are in TOKEN_VARS
             tokvals = {k: v for k, v in (cat_cfg | locals()).items() if k in TOKEN_VARS}
             url     = self.token_repl(self.fetch_url, **tokvals)
             params  = {k: self.token_repl(v, **tokvals)
@@ -383,6 +389,9 @@ class RefdataCLMU(Refdata):
         # now handle cases where we have to decide where stuff goes
         assert last_pieces and first_pieces
         if len(first_pieces) > 1:
+            # ATTENTION: disabling the following manipulation for now (clever, but doing
+            # more harm than good)!!!
+            r'''
             # coelesce leading initials in first_pieces (e.g. "J. S." -> "J.S.")
             if m := re.fullmatch(r'(\p{Lu}\.( \p{Lu}\.)+)(.*)', ' '.join(first_pieces)):
                 assert not person.first_name
@@ -392,6 +401,8 @@ class RefdataCLMU(Refdata):
                     assert not person.middle_name
                     person.middle_name = m.group(3).strip()
             else:
+            '''
+            if True:  # TEMP: to keep proper indent level for this block
                 assert not person.first_name
                 assert not person.middle_name
                 person.first_name = first_pieces.pop(0)
@@ -458,8 +469,8 @@ class RefdataCLMU(Refdata):
             else:
                 comp_name = comp
 
-            # source-specific processing for creating an alternate version of `comp`, if
-            # `addl_info` is present (basically, swap first two comma-delimited fields,
+            # source-specific processing for creating an alternate version of comp if
+            # addl_info is present (basically, swap first two comma-delimited fields,
             # omitting the intervening comma)
             if addl_info:
                 pieces = comp_name.split(', ', 2)
@@ -467,6 +478,12 @@ class RefdataCLMU(Refdata):
                     alt_comp = f"{pieces[1]} {pieces[0]}{addl_info}"
                 elif len(pieces) > 2:
                     alt_comp = f"{pieces[1]} {pieces[0]}, {pieces[2]}{addl_info}"
+                else:
+                    assert len(pieces) == 1
+                    # also take care of case where one-part name has no comma separator
+                    # for addl_info
+                    if addl_info[0] == ' ':
+                        alt_comp = f"{pieces[0]},{addl_info}"
 
             # structural fixup for comp_name: fix embedded and trailing commas; try and be
             # as specific as possible initially (can broaden as needed, based on anomalies)
@@ -485,11 +502,14 @@ class RefdataCLMU(Refdata):
                 continue
 
             if not comp_person:
+                log.info(f"Could not parse comp_name '{comp_name}'")
                 skip += 1
                 continue
             new_comp = None
             now_ts = now_str()  # use same timestamp for everything here
             try:
+                if addl_info:
+                    comp_person.disamb = addl_info.lstrip(', ')
                 comp_person.is_composer = True
                 comp_person.source = ctx.source
                 comp_person.source_date = str(ctx.source_date)
@@ -503,7 +523,9 @@ class RefdataCLMU(Refdata):
                 person_data['meta'] = meta
                 log.info(f"Conflict saving Person: {person_data}")
                 Conflict.create(entity_name=comp_person.__class__.__name__,
-                                entity_def=person_data)
+                                entity_def=person_data,
+                                created_at=now_ts,
+                                updated_at=now_ts)
 
                 comp_person = Person.get(Person.name == comp_person.name,
                                          Person.disamb == comp_person.disamb)
@@ -515,6 +537,8 @@ class RefdataCLMU(Refdata):
                 upd += 1
 
             try:
+                # REVISIT: there needs to be a process for disambiguating names whenever
+                # duplicates are added to (or detected in) Person!!!
                 PersonName.create(name_str=comp,
                                   source=ctx.source,
                                   source_date=str(ctx.source_date),
@@ -586,18 +610,30 @@ class RefdataCLMU(Refdata):
                  .select()
                  .join(Person)
                  .where(PersonName.name_str == comp_name,
-                        PersonName.source == ctx.source,
-                        Person.is_composer == True))
+                        PersonName.source == ctx.source))
         pnames = list(query.execute())
         if not pnames:
-            return None
+            # try normalized name match (combine with above?)
+            query = (PersonName
+                     .select()
+                     .join(Person)
+                     .where(PersonName.name_str_norm == norm(comp_name),
+                            PersonName.source == ctx.source))
+            pnames = list(query.execute())
+            if not pnames:
+                return None
+            # TODO (maybe): add case-sensitive match to PersonName???
         assert len(pnames) == 1
-        return pnames[0].person_id if id_only else pnames[0].person
+        comp = pnames[0].person
+        if not comp.is_composer:
+            log.info(f"Setting is_composer flag for Person ID {comp.id} ({comp.name}) ")
+            comp.is_composer = True
+            comp.save()
+        return comp.id if id_only else comp
 
     def load_work(self, ctx: LoadCtx, data: SegData, dryrun: bool = False) -> tuple[int, int, int]:
         """Return tuple of record counts: [inserted, updated, skipped].
         """
-        print(f"File: {ctx.file}")
         assert isinstance(data, BeautifulSoup)
         ins  = 0
         upd  = 0
@@ -625,8 +661,11 @@ class RefdataCLMU(Refdata):
             meta = {}
             meta['short_title'] = title
 
+            # look for a quick match without having to parse
             composer = self.find_composer(ctx, compsr_name)
             if not composer:
+                # TODO: have to do more work in processing composer string (possibly
+                # adding person and/or records)!!!
                 log.info(f"Composer name '{compsr_name}' not found, skipping work {real_title}")
                 continue
             #work = self.parse_work_name(real_title)
@@ -659,7 +698,9 @@ class RefdataCLMU(Refdata):
                 work_data['meta'] = meta
                 log.info(f"Conflict saving Work: {work_data}")
                 Conflict.create(entity_name=work.__class__.__name__,
-                                entity_def=work_data)
+                                entity_def=work_data,
+                                created_at=now_ts,
+                                updated_at=now_ts)
 
                 work = Work.get(Work.composer == work.composer,
                                 Work.name == work.name,
@@ -743,15 +784,16 @@ def main() -> int:
 
     where:
 
-      - <key(s)> is either a single key (typically the initial letter of the name, but can
+      - <key(s)> is either a single key (typically the initial letter of a name, but can
         be a results page number for some sources), a comma-separated list of keys, or a
-        key range (designated by start-end); all entries are assumed if `keys` is omitted
+        key range (designated by start-end); complete set of data within the category is
+        assumed if ``keys`` is omitted
 
-      - `force` (optional, default false) indicates that existing entries should be
+      - ``force`` (optional, default false) indicates that existing entries should be
         overwritten
 
-      - `dryrun` (optional, default false) indicates that writes to files or database are
-         not performed (would-be actions are printed to stdout instead)
+      - ``dryrun`` (optional, default false) indicates that writes to files or database
+         are not performed (would-be actions are printed to stdout instead)
 
     """
     if len(sys.argv) < 4:
