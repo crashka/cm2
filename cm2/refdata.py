@@ -66,7 +66,7 @@ class Refdata:
     full_name:      str
     subclass:       str
     dflt_keys:      str            = None
-    categories:     dict[str, dict[str, str]]
+    categories:     dict[str, dict[str, str]]  # category: {param: value, ...}
     fetch_url:      str
     fetch_params:   dict[str, str] = {}
     fetch_format:   str
@@ -415,6 +415,75 @@ class RefdataCLMU(Refdata):
         person.last_name = ' '.join(last_pieces)
         return person
 
+    def parse_comp_str(self, comp_str: str) -> tuple:
+        """
+        """
+        comp_name    = None
+        addl_info    = None
+        alt_comp_str = None
+        meta         = {}
+
+        # Rule 1 - match any of the following line endings (will be added to person
+        # metainfo as "floruit"):
+        #   ", fl. 1971"
+        #   ", fl. 1430-1439"
+        #   " fl. 1675"
+        #   " fl. 1698-1698"
+        #
+        # Note that we are not enforcing exactly 4 digits per year, to allow for
+        # variability
+        rule1 = r'(.+?)(,? fl\. ([0-9-]+(\-[0-9]+)?))'
+
+        # Rule 2 - match any of the following line endings (will be added to person
+        # metainfo as "dates"):
+        #   ", 1971-"
+        #   ", 1430-1439"
+        #   " 1975-"
+        #   " 1698-1698"
+        #
+        # Same as above regarding date formatting (though this rule only recognizes dates
+        # as years)
+        rule2 = r'(.+?)(,? (([0-9-]+)\-([0-9]+)?))'
+
+        if m := re.fullmatch(rule1, comp_str):
+            comp_name = m.group(1)
+            addl_info = m.group(2)
+            meta['floruit'] = m.group(3)
+        elif m := re.fullmatch(rule2, comp_str):
+            comp_name = m.group(1)
+            addl_info = m.group(2)
+            meta['dates'] = m.group(3)
+            meta['born'] = m.group(4)
+            if m.group(5):
+                meta['died'] = m.group(5)
+        else:
+            comp_name = comp_str
+
+        # source-specific processing for creating an alternate version of comp_str if
+        # addl_info is present (basically, swap the first two comma-delimited fields,
+        # omitting the intervening comma)
+        if addl_info:
+            pieces = comp_name.split(', ', 2)
+            if len(pieces) == 2:
+                alt_comp_str = f"{pieces[1]} {pieces[0]}{addl_info}"
+            elif len(pieces) > 2:
+                alt_comp_str = f"{pieces[1]} {pieces[0]}, {pieces[2]}{addl_info}"
+            else:
+                assert len(pieces) == 1
+                # also take care of case where one-part name has no comma separator
+                # for addl_info
+                if addl_info[0] == ' ':
+                    alt_comp_str = f"{pieces[0]},{addl_info}"
+
+        # structural fixup for comp_name: fix embedded and trailing commas; try and be
+        # as specific as possible initially (can broaden as needed, based on anomalies)
+        comp_name = re.sub(r'(\pL)\,(\pL)', r'\1, \2', comp_name)
+        if comp_name[-1] == ',':
+            comp_name = comp_name.rstrip(',')
+
+        disamb = addl_info.lstrip(', ') if addl_info else None
+        return comp_name, disamb, alt_comp_str, meta
+
     def load_composer(self, ctx: LoadCtx, data: SegData,
                       dryrun: bool = False) -> tuple[int, int, int]:
         """Return tuple of record counts: [inserted, updated, skipped].
@@ -428,69 +497,8 @@ class RefdataCLMU(Refdata):
         for tr in content.select("tbody tr"):
             comp = tr.select_one("td.views-field-name").string.strip()
             link = tr.select_one("td.views-field-count").a['href']
-            comp_name = None
-            addl_info = None
-            alt_comp  = None
-            meta      = {}
 
-            # Rule 1 - match any of the following line endings (will be added to person
-            # metainfo as "floruit"):
-            #   ", fl. 1971"
-            #   ", fl. 1430-1439"
-            #   " fl. 1675"
-            #   " fl. 1698-1698"
-            #
-            # Note that we are not enforcing exactly 4 digits per year, to allow for
-            # variability
-            rule1 = r'(.+?)(,? fl\. ([0-9-]+(\-[0-9]+)?))'
-
-            # Rule 2 - match any of the following line endings (will be added to person
-            # metainfo as "dates"):
-            #   ", 1971-"
-            #   ", 1430-1439"
-            #   " 1975-"
-            #   " 1698-1698"
-            #
-            # Same as above regarding date formatting (though this rule only recognizes
-            # dates as years)
-            rule2 = r'(.+?)(,? (([0-9-]+)\-([0-9]+)?))'
-
-            if m := re.fullmatch(rule1, comp):
-                comp_name = m.group(1)
-                addl_info = m.group(2)
-                meta['floruit'] = m.group(3)
-            elif m := re.fullmatch(rule2, comp):
-                comp_name = m.group(1)
-                addl_info = m.group(2)
-                meta['dates'] = m.group(3)
-                meta['born'] = m.group(4)
-                if m.group(5):
-                    meta['died'] = m.group(5)
-            else:
-                comp_name = comp
-
-            # source-specific processing for creating an alternate version of comp if
-            # addl_info is present (basically, swap first two comma-delimited fields,
-            # omitting the intervening comma)
-            if addl_info:
-                pieces = comp_name.split(', ', 2)
-                if len(pieces) == 2:
-                    alt_comp = f"{pieces[1]} {pieces[0]}{addl_info}"
-                elif len(pieces) > 2:
-                    alt_comp = f"{pieces[1]} {pieces[0]}, {pieces[2]}{addl_info}"
-                else:
-                    assert len(pieces) == 1
-                    # also take care of case where one-part name has no comma separator
-                    # for addl_info
-                    if addl_info[0] == ' ':
-                        alt_comp = f"{pieces[0]},{addl_info}"
-
-            # structural fixup for comp_name: fix embedded and trailing commas; try and be
-            # as specific as possible initially (can broaden as needed, based on anomalies)
-            comp_name = re.sub(r'(\pL)\,(\pL)', r'\1, \2', comp_name)
-            if comp_name[-1] == ',':
-                comp_name = comp_name.rstrip(',')
-
+            comp_name, disamb, alt_comp, meta = self.parse_comp_str(comp)
             if link:
                 meta['clmu_link'] = link
 
@@ -508,8 +516,8 @@ class RefdataCLMU(Refdata):
             new_comp = None
             now_ts = now_str()  # use same timestamp for everything here
             try:
-                if addl_info:
-                    comp_person.disamb = addl_info.lstrip(', ')
+                if disamb:
+                    comp_person.disamb = disamb
                 comp_person.is_composer = True
                 comp_person.source = ctx.source
                 comp_person.source_date = str(ctx.source_date)
