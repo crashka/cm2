@@ -26,7 +26,8 @@ from .core import (cfg, log, DataFile, ConfigError, ImplementationError, DFLT_CH
                    DFLT_FETCH_INT, DFLT_HTML_PARSER)
 from .langutils import norm
 from .dbcore import now_str
-from .schema import Person, PersonMeta, PersonName, Work, WorkMeta, WorkName, Conflict
+from .schema import (Person, PersonMeta, PersonName, Work, WorkMeta, WorkName,
+                     EntityOp, Conflict, Failure)
 
 REFDATA_DIR  = 'refdata'
 BASE_CFG_KEY = 'refdata_base'
@@ -278,7 +279,7 @@ class RefdataCLMU(Refdata):
         else:
             return keys.split(',')
 
-    def parse_comp_name(self, comp_name: str) -> Person | None:
+    def parse_comp_name(self, comp_name: str, disamb: str | None) -> Person | None:
         """
         """
         TITLES           = ['Sir']
@@ -291,6 +292,8 @@ class RefdataCLMU(Refdata):
                             'le père', 'le fils', 'père', 'fils']
 
         person = Person()
+        if disamb:
+            person.disamb = disamb
         pieces = comp_name.split(', ')
 
         # only look for last name prefix if 3 or more pieces, to guard against the case
@@ -415,7 +418,7 @@ class RefdataCLMU(Refdata):
         person.last_name = ' '.join(last_pieces)
         return person
 
-    def parse_comp_str(self, comp_str: str) -> tuple:
+    def parse_comp_str(self, comp_str: str, by_last: bool = False) -> tuple:
         """
         """
         comp_name    = None
@@ -463,16 +466,21 @@ class RefdataCLMU(Refdata):
         # addl_info is present (basically, swap the first two comma-delimited fields,
         # omitting the intervening comma)
         if addl_info:
-            pieces = comp_name.split(', ', 2)
-            if len(pieces) == 2:
-                alt_comp_str = f"{pieces[1]} {pieces[0]}{addl_info}"
-            elif len(pieces) > 2:
-                alt_comp_str = f"{pieces[1]} {pieces[0]}, {pieces[2]}{addl_info}"
+            if by_last:
+                pieces = comp_name.split(', ', 2)
+                if len(pieces) == 2:
+                    alt_comp_str = f"{pieces[1]} {pieces[0]}{addl_info}"
+                elif len(pieces) > 2:
+                    alt_comp_str = f"{pieces[1]} {pieces[0]}, {pieces[2]}{addl_info}"
+                else:
+                    assert len(pieces) == 1
+                    # also take care of case where one-part name has no comma separator
+                    # for addl_info
+                    if addl_info[0] == ' ':
+                        alt_comp_str = f"{pieces[0]},{addl_info}"
             else:
-                assert len(pieces) == 1
-                # also take care of case where one-part name has no comma separator
-                # for addl_info
-                if addl_info[0] == ' ':
+                # same as just above
+                if comp_name.find(' ') == -1 and addl_info[0] == ' ':
                     alt_comp_str = f"{pieces[0]},{addl_info}"
 
         # structural fixup for comp_name: fix embedded and trailing commas; try and be
@@ -483,6 +491,70 @@ class RefdataCLMU(Refdata):
 
         disamb = addl_info.lstrip(', ') if addl_info else None
         return comp_name, disamb, alt_comp_str, meta
+
+    def add_composer(self, ctx: LoadCtx, comp_person: Person, meta: dict) -> tuple[bool, list]:
+        """Return tuple: (new comp created? [bool], list of PersonNames)
+        """
+        new_comp = False
+        comp_names = []
+        now_ts = now_str()  # use same timestamp for everything here
+        try:
+            comp_person.is_composer = True
+            comp_person.source = ctx.source
+            comp_person.source_date = str(ctx.source_date)
+            comp_person.save()
+            new_comp = True
+        except IntegrityError as e:
+            person_data = dict(comp_person.__data__)
+            person_data['meta'] = meta
+            log.info(f"Conflict saving Person: {person_data}")
+            Conflict.create(entity_name=Person.__name__,
+                            entity_str=comp_person.name,
+                            entity_info=person_data,
+                            operation=EntityOp.INSERT,
+                            created_at=now_ts,
+                            updated_at=now_ts)
+
+        if not new_comp:
+            return new_comp, comp_names
+
+        meta_items = []
+        for k, v in meta.items():
+            meta_items.append({'person':      comp_person.id,
+                               'key':         k,
+                               'value':       v,
+                               'source':      ctx.source,
+                               'source_date': str(ctx.source_date),
+                               'created_at':  now_ts,
+                               'updated_at':  now_ts})
+        PersonMeta.insert_many(meta_items).execute()
+
+        # RETHINK: do we want to add all of these variants proactively, or be more
+        # selective here, and provide a richer search at look-up time???
+        other_names = {'name':           comp_person.name,
+                       'short_name':     comp_person.short_name,
+                       'var_name':       comp_person.var_name,
+                       'alt_name':       comp_person.alt_name,
+                       'alt_short_name': comp_person.alt_short_name,
+                       'alt_var_name':   comp_person.alt_var_name}
+        for name_type, name_str in other_names.items():
+            if not name_str or name_str in comp_names:
+                continue
+            try:
+                PersonName.create(name_str=name_str,
+                                  name_type=name_type,
+                                  source=ctx.source,
+                                  source_date=str(ctx.source_date),
+                                  person=comp_person,
+                                  person_res='add_composer',
+                                  created_at=now_ts,
+                                  updated_at=now_ts)
+                comp_names.append(name_str)
+            except IntegrityError as e:
+                log.info(f"Duplicate PersonName '{name_str}' ({name_type})")
+                pass
+
+        return new_comp, comp_names
 
     def load_composer(self, ctx: LoadCtx, data: SegData,
                       dryrun: bool = False) -> tuple[int, int, int]:
@@ -498,106 +570,44 @@ class RefdataCLMU(Refdata):
             comp = tr.select_one("td.views-field-name").string.strip()
             link = tr.select_one("td.views-field-count").a['href']
 
-            comp_name, disamb, alt_comp, meta = self.parse_comp_str(comp)
+            comp_name, disamb, alt_comp, meta = self.parse_comp_str(comp, by_last=True)
             if link:
                 meta['clmu_link'] = link
 
-            comp_person = self.parse_comp_name(comp_name)
+            comp_person = self.parse_comp_name(comp_name, disamb)
             if dryrun:
                 full_name = comp_person.full_name if comp_person else '[UNPARSED]'
                 print(f"{comp_name} => {full_name}")
                 #print(comp_name, meta)
                 continue
 
+            now_ts = now_str()  # use same timestamp for everything here
             if not comp_person:
                 log.info(f"Could not parse comp_name '{comp_name}'")
+                Failure.create(entity_name=Person.__name__,
+                               entity_str=comp_name,
+                               operation=EntityOp.PARSE,
+                               created_at=now_ts,
+                               updated_at=now_ts)
                 skip += 1
                 continue
-            new_comp = None
-            now_ts = now_str()  # use same timestamp for everything here
-            try:
-                if disamb:
-                    comp_person.disamb = disamb
-                comp_person.is_composer = True
-                comp_person.source = ctx.source
-                comp_person.source_date = str(ctx.source_date)
-                comp_person.created_at = now_ts
-                comp_person.updated_at = now_ts
-                comp_person.save()
-                new_comp = True
-                ins += 1
-            except IntegrityError as e:
-                person_data = dict(comp_person.__data__)
-                person_data['meta'] = meta
-                log.info(f"Conflict saving Person: {person_data}")
-                Conflict.create(entity_name=comp_person.__class__.__name__,
-                                entity_def=person_data,
-                                created_at=now_ts,
-                                updated_at=now_ts)
 
-                comp_person = Person.get(Person.name == comp_person.name,
-                                         Person.disamb == comp_person.disamb)
-                # note that we fall through here so that we can (possibly) add new
-                # person_names or metadata (either of which would constitute an update)
-                new_comp = False
-                # FIX: we don't know if this is really an update yet, but for now just do
-                # this to distinguish from unparseable/skip!!!
-                upd += 1
-
-            try:
+            new_comp, comp_names = self.add_composer(ctx, comp_person, meta)
+            if not new_comp:
                 # REVISIT: there needs to be a process for disambiguating names whenever
                 # duplicates are added to (or detected in) Person!!!
-                PersonName.create(name_str=comp,
-                                  source=ctx.source,
-                                  source_date=str(ctx.source_date),
-                                  person=comp_person,
-                                  person_res='load_composer',
-                                  created_at=now_ts,
-                                  updated_at=now_ts)
+                comp_person = Person.get(Person.name == comp_person.name,
+                                         Person.disamb == comp_person.disamb)
 
-                if alt_comp:
-                    PersonName.create(name_str=alt_comp,
-                                      source=ctx.source,
-                                      source_date=str(ctx.source_date),
-                                      person=comp_person,
-                                      person_res='load_composer',
-                                      created_at=now_ts,
-                                      updated_at=now_ts)
-            except IntegrityError as e:
-                # this presumes that only the first insert would fail this way
-                log.info(f"Duplicate PersonName '{comp}' (0)")
-
-            if not new_comp:
-                continue
-
-            if comp_name != comp:
-                try:
-                    PersonName.create(name_str=comp_name,
-                                      source=ctx.source,
-                                      source_date=str(ctx.source_date),
-                                      person=comp_person,
-                                      person_res='load_composer',
-                                      created_at=now_ts,
-                                      updated_at=now_ts)
-                except IntegrityError as e:
-                    log.info(f"Duplicate PersonName '{comp_name}' (1)")
-
-            meta_items = []
-            for k, v in meta.items():
-                meta_items.append({'person':      comp_person.id,
-                                   'key':         k,
-                                   'value':       v,
-                                   'source':      ctx.source,
-                                   'source_date': str(ctx.source_date),
-                                   'created_at':  now_ts,
-                                   'updated_at':  now_ts})
-            PersonMeta.insert_many(meta_items).execute()
-
-            for i, name_str in enumerate([comp_person.name, comp_person.alt_name]):
-                if not name_str or name_str == comp_name:
+            other_names = {'comp_str':     comp,
+                           'alt_comp_str': alt_comp,
+                           'comp_name':    comp_name}
+            for name_type, name_str in other_names.items():
+                if not name_str or name_str in comp_names:
                     continue
                 try:
                     PersonName.create(name_str=name_str,
+                                      name_type=name_type,
                                       source=ctx.source,
                                       source_date=str(ctx.source_date),
                                       person=comp_person,
@@ -605,7 +615,7 @@ class RefdataCLMU(Refdata):
                                       created_at=now_ts,
                                       updated_at=now_ts)
                 except IntegrityError as e:
-                    log.info(f"Duplicate PersonName '{name_str}' ({i+2})")
+                    log.info(f"Duplicate PersonName '{name_str}' ({name_type})")
                     pass
 
         return ins, upd, skip
@@ -668,10 +678,30 @@ class RefdataCLMU(Refdata):
 
             meta = {}
             meta['short_title'] = title
+            now_ts = now_str()  # use same timestamp for everything here
 
             # look for a quick match without having to parse
             composer = self.find_composer(ctx, compsr_name)
             if not composer:
+                r'''
+                comp_name, disamb, alt_comp, meta = self.parse_comp_str(compsr_name)
+                comp_person = self.parse_comp_name(comp_name, disamb)
+
+                if dryrun:
+                    full_name = comp_person.full_name if comp_person else '[UNPARSED]'
+                    print(f"{full_name} (new): {real_title}")
+                    continue
+
+                if not comp_person:
+                    log.info(f"Could not parse comp_name '{comp_name}'")
+                    Failure.create(entity_name=Person.__name__,
+                                   entity_str=comp_name,
+                                   operation=EntityOp.PARSE,
+                                   created_at=now_ts,
+                                   updated_at=now_ts)
+                    skip += 1
+                    continue
+                '''
                 # TODO: have to do more work in processing composer string (possibly
                 # adding person and/or records)!!!
                 log.info(f"Composer name '{compsr_name}' not found, skipping work {real_title}")
@@ -689,15 +719,12 @@ class RefdataCLMU(Refdata):
                 skip += 1
                 continue
             new_work = None
-            now_ts = now_str()  # use same timestamp for everything here
             try:
                 work.work_type   = genre
                 work.work_title  = real_title
                 work.work_date   = composed
                 work.source      = ctx.source
                 work.source_date = str(ctx.source_date)
-                work.created_at  = now_ts
-                work.updated_at  = now_ts
                 work.save()
                 new_work = True
                 ins += 1
@@ -705,8 +732,10 @@ class RefdataCLMU(Refdata):
                 work_data = dict(work.__data__)
                 work_data['meta'] = meta
                 log.info(f"Conflict saving Work: {work_data}")
-                Conflict.create(entity_name=work.__class__.__name__,
-                                entity_def=work_data,
+                Conflict.create(entity_name=Work.__name__,
+                                entity_str=real_title,
+                                entity_info=work_data,
+                                operation=EntityOp.INSERT,
                                 created_at=now_ts,
                                 updated_at=now_ts)
 

@@ -4,6 +4,8 @@
 """Schema entity definitions and management commands.
 """
 
+from enum import StrEnum
+
 from peewee import *
 from playhouse.sqlite_ext import *
 
@@ -11,24 +13,39 @@ from .core import log
 from .langutils import norm
 from .dbcore import db, BaseModel
 
+#########
+# Enums #
+#########
+
+# used in Conflict and Failure records
+class EntityOp(StrEnum):
+    PARSE  = "parse"
+    FIND   = "find"
+    INSERT = "insert"
+    UPDATE = "update"
+
 ##########
 # Person #
 ##########
 
 # Note: "comp" in this module means component (not composer)
-NAME_COMPS     = ['title', 'first_name', 'middle_name', 'last_prefix', 'last_name', 'suffix']
-ALT_NAME_COMPS = ['last_name', 'suffix', 'title', 'first_name', 'middle_name', 'last_prefix']
+NAME_COMPS         = ['title', 'first_name', 'middle_name', 'last_prefix', 'last_name', 'suffix']
+SH_NAME_COMPS      = ['title', 'first_name', 'last_prefix', 'last_name', 'suffix']
+VAR_NAME_COMPS     = ['title', 'middle_name', 'last_prefix', 'last_name', 'suffix']
+ALT_NAME_COMPS     = ['last_name', 'suffix', 'title', 'first_name', 'middle_name', 'last_prefix']
+ALT_SH_NAME_COMPS  = ['last_name', 'suffix', 'title', 'first_name', 'last_prefix']
+ALT_VAR_NAME_COMPS = ['last_name', 'suffix', 'title', 'middle_name', 'last_prefix']
 
 class Person(BaseModel):
     """Represents a person
     """
     name          = TextField()           # defaults to full_name
     disamb        = TextField(default='')
-    alt_name      = TextField(null=True)  # generally leads with last name
+    alt_name      = TextField(null=True)  # typically, leading with last name
 
     # name components ("generally" normalized)
     title         = TextField(null=True)
-    first_name    = TextField(null=True)
+    first_name    = TextField(null=True)  # also used for single-name persons
     middle_name   = TextField(null=True)
     last_prefix   = TextField(null=True)
     last_name     = TextField(null=True)
@@ -58,6 +75,7 @@ class Person(BaseModel):
         indexes = (
             # duplicate names must be disambiguatable
             (('name', 'disamb'), True),
+            (('alt_name',), False),
         )
 
     @property
@@ -72,10 +90,66 @@ class Person(BaseModel):
         return ' '.join(comps)
 
     @property
+    def short_name(self) -> str:
+        """ Short(er) construction of person's name, omitting middle_name.
+        """
+        if not self.first_name:
+            return None
+        comps = [getattr(self, x) for x in SH_NAME_COMPS if getattr(self, x)]
+        # add comma before name suffix, if exists
+        if self.suffix:
+            assert len(comps) > 1
+            comps[-2] += ','
+        return ' '.join(comps)
+
+    @property
+    def var_name(self) -> str:
+        """ Variant short(er) construction of person's name, omitting first_name.
+        """
+        if not self.middle_name:
+            return None
+        comps = [getattr(self, x) for x in VAR_NAME_COMPS if getattr(self, x)]
+        # add comma before name suffix, if exists
+        if self.suffix:
+            assert len(comps) > 1
+            comps[-2] += ','
+        return ' '.join(comps)
+
+    @property
     def alt_full_name(self) -> str:
         """ Alternate construction of person's name, leading with last name.
         """
         comps = [getattr(self, x) for x in ALT_NAME_COMPS if getattr(self, x)]
+        # add comma after last name, or suffix (if exists)
+        if self.last_name and len(comps) > 1:
+            if not self.suffix:
+                comps[0] += ','
+            elif self.suffix and len(comps) > 2:
+                comps[1] += ','
+        return ' '.join(comps)
+
+    @property
+    def alt_short_name(self) -> str:
+        """ Short(er) construction of "alt" name, omitting middle_name.
+        """
+        if not self.first_name:
+            return None
+        comps = [getattr(self, x) for x in ALT_SH_NAME_COMPS if getattr(self, x)]
+        # add comma after last name, or suffix (if exists)
+        if self.last_name and len(comps) > 1:
+            if not self.suffix:
+                comps[0] += ','
+            elif self.suffix and len(comps) > 2:
+                comps[1] += ','
+        return ' '.join(comps)
+
+    @property
+    def alt_var_name(self) -> str:
+        """ Variant short(er) construction of "alt" name, omitting first_name.
+        """
+        if not self.middle_name:
+            return None
+        comps = [getattr(self, x) for x in ALT_VAR_NAME_COMPS if getattr(self, x)]
         # add comma after last name, or suffix (if exists)
         if self.last_name and len(comps) > 1:
             if not self.suffix:
@@ -122,6 +196,7 @@ class PersonName(BaseModel):
     """
     name_str      = TextField()           # raw name string (no fixup)
     name_str_norm = TextField(index=True)
+    name_type     = TextField(null=True)
     source        = TextField(default='')
     source_date   = DateField(null=True)
     person        = ForeignKeyField(Person, null=True, backref='person_names')
@@ -234,15 +309,35 @@ class WorkName(BaseModel):
 class Conflict(BaseModel):
     """Represents entity conflicts (on unique keys) to be resolved
     """
-    entity_name = TextField()  # raw name string (no fixup)
-    entity_def  = JSONField()  # JSON object of entity attributes (including metainfo)
+    entity_name = TextField()
+    entity_str  = TextField()                # raw name string (no fixup)
+    entity_info = JSONField()                # JSON object of entity attributes (and metainfo)
+    operation   = TextField()
     status      = TextField(default='open')  # 'open', 'in process, 'resolved', 'withdrawn'
     parent_id   = IntegerField(null=True)    # id of parent (resolved to) record
 
     class Meta:
         indexes = (
-            # guard against duplicate records
-            (('entity_name', 'entity_def'), True),
+            (('entity_name', 'entity_str', 'entity_info'), False),
+        )
+
+###########
+# Failure #
+###########
+
+class Failure(BaseModel):
+    """Represents entity failures (e.g. parsing) to be resolved
+    """
+    entity_name = TextField()
+    entity_str  = TextField()                # raw name string (no fixup)
+    entity_info = JSONField(default={})      # relevant metainformation (if any)
+    operation   = TextField()
+    status      = TextField(default='open')  # 'open', 'in process, 'resolved', 'withdrawn'
+    parent_id   = IntegerField(null=True)    # id of parent (resolved to) record
+
+    class Meta:
+        indexes = (
+            (('entity_name', 'entity_str'), False),
         )
 
 ##########
@@ -253,6 +348,7 @@ ALL_MODELS = [Person,
               PersonMeta,
               PersonName,
               Conflict,
+              Failure,
               Work,
               WorkMeta,
               WorkName]

@@ -49,7 +49,10 @@ class BaseModel(Model):
     updated_at    = DateTimeField()
 
     def save(self, *args, **kwargs):
-        self.updated_at = now_str()
+        if not self.updated_at:
+            self.updated_at = self.created_at
+        elif 'updated_at' not in self._dirty:
+            self.updated_at = now_str()
         return super().save(*args, **kwargs)
 
     class Meta:
