@@ -311,14 +311,14 @@ class Conflict(BaseModel):
     """
     entity_name = TextField()
     entity_str  = TextField()                # raw name string (no fixup)
-    entity_info = JSONField()                # JSON object of entity attributes (and metainfo)
+    entity_info = JSONField()                # entity attributes (plus ctx/metainfo)
     operation   = TextField()
     status      = TextField(default='open')  # 'open', 'in process, 'resolved', 'withdrawn'
     parent_id   = IntegerField(null=True)    # id of parent (resolved to) record
 
     class Meta:
         indexes = (
-            (('entity_name', 'entity_str', 'entity_info'), False),
+            (('entity_name', 'operation', 'entity_str'), False),
         )
 
 ###########
@@ -330,14 +330,14 @@ class Failure(BaseModel):
     """
     entity_name = TextField()
     entity_str  = TextField()                # raw name string (no fixup)
-    entity_info = JSONField(default={})      # relevant metainformation (if any)
+    entity_info = JSONField()                # relevant ctx and metainfo (if any)
     operation   = TextField()
     status      = TextField(default='open')  # 'open', 'in process, 'resolved', 'withdrawn'
     parent_id   = IntegerField(null=True)    # id of parent (resolved to) record
 
     class Meta:
         indexes = (
-            (('entity_name', 'entity_str'), False),
+            (('entity_name', 'operation', 'entity_str'), False),
         )
 
 ##########

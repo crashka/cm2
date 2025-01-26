@@ -3,7 +3,7 @@
 """Core configuration and definitions for database stuff.
 """
 
-from datetime import datetime
+from datetime import datetime, date
 
 from peewee import Model, DateTimeField
 from playhouse.sqlite_ext import SqliteExtDatabase
@@ -27,6 +27,12 @@ def now_str() -> str:
     """ Need this to make model objects serializable as JSON
     """
     return str(datetime.now())
+
+def date_str(ts: int = None) -> str:
+    """ Need this to make model objects serializable as JSON
+    """
+    dt = date.fromtimestamp(ts) if ts else date.today()
+    return str(dt)
 
 #############
 # BaseModel #

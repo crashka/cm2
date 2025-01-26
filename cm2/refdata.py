@@ -25,7 +25,7 @@ from peewee import IntegrityError
 from .core import (cfg, log, DataFile, ConfigError, ImplementationError, DFLT_CHARSET,
                    DFLT_FETCH_INT, DFLT_HTML_PARSER)
 from .langutils import norm
-from .dbcore import now_str
+from .dbcore import now_str, date_str
 from .schema import (Person, PersonMeta, PersonName, Work, WorkMeta, WorkName,
                      EntityOp, Conflict, Failure)
 
@@ -43,9 +43,10 @@ sources      = cfg.config(SOURCES_KEY)
 class LoadCtx(NamedTuple):
     """
     """
-    file:   str        # full pathname
-    source:  str       # refdata source name (config key)
-    source_date: date  # datestamp of the data
+    file:        str  # full pathname
+    source:      str  # refdata source name (config key)
+    source_date: str  # datestamp of the data
+    load_ts:     str  # timestamp for load operation
 
 SegData = BeautifulSoup | dict
 
@@ -249,13 +250,26 @@ class Refdata:
 
         for file, data in self.read_segs(category, keys):
             file_mtime = os.stat(file).st_mtime
-            ctx = LoadCtx(file, self.name, date.fromtimestamp(file_mtime))
+            ctx = LoadCtx(file, self.name, date_str(file_mtime), now_str())
             ins, upd, skip = load_func(ctx, data, dryrun)
             log.info(f"Load from {file}: {ins} inserted, {upd} updated, {skip} skipped")
 
 ###############
 # RefdataCLMU #
 ###############
+
+# TEMP: hardwire this for now--later may want to move this to config file!!!
+COMP_MATCH_STRGTH = {
+    'comp_str':       7,
+    'alt_comp_str':   6,
+    'comp_name':      5,
+    'name':           5,
+    'alt_name':       4,
+    'short_name':     3,
+    'alt_short_name': 3,
+    'var_name':       2,
+    'alt_var_name':   1
+}
 
 class RefdataCLMU(Refdata):
     """
@@ -497,23 +511,23 @@ class RefdataCLMU(Refdata):
         """
         new_comp = False
         comp_names = []
-        now_ts = now_str()  # use same timestamp for everything here
         try:
             comp_person.is_composer = True
-            comp_person.source = ctx.source
-            comp_person.source_date = str(ctx.source_date)
+            comp_person.source      = ctx.source
+            comp_person.source_date = ctx.source_date
             comp_person.save()
             new_comp = True
         except IntegrityError as e:
             person_data = dict(comp_person.__data__)
+            person_data['ctx'] = ctx
             person_data['meta'] = meta
             log.info(f"Conflict saving Person: {person_data}")
             Conflict.create(entity_name=Person.__name__,
                             entity_str=comp_person.name,
                             entity_info=person_data,
                             operation=EntityOp.INSERT,
-                            created_at=now_ts,
-                            updated_at=now_ts)
+                            created_at=ctx.load_ts,
+                            updated_at=ctx.load_ts)
 
         if not new_comp:
             return new_comp, comp_names
@@ -524,19 +538,19 @@ class RefdataCLMU(Refdata):
                                'key':         k,
                                'value':       v,
                                'source':      ctx.source,
-                               'source_date': str(ctx.source_date),
-                               'created_at':  now_ts,
-                               'updated_at':  now_ts})
+                               'source_date': ctx.source_date,
+                               'created_at':  ctx.load_ts,
+                               'updated_at':  ctx.load_ts})
         PersonMeta.insert_many(meta_items).execute()
 
         # RETHINK: do we want to add all of these variants proactively, or be more
         # selective here, and provide a richer search at look-up time???
-        other_names = {'name':           comp_person.name,
-                       'short_name':     comp_person.short_name,
-                       'var_name':       comp_person.var_name,
-                       'alt_name':       comp_person.alt_name,
+        other_names = {'name'          : comp_person.name,
+                       'short_name'    : comp_person.short_name,
+                       'var_name'      : comp_person.var_name,
+                       'alt_name'      : comp_person.alt_name,
                        'alt_short_name': comp_person.alt_short_name,
-                       'alt_var_name':   comp_person.alt_var_name}
+                       'alt_var_name'  : comp_person.alt_var_name}
         for name_type, name_str in other_names.items():
             if not name_str or name_str in comp_names:
                 continue
@@ -544,11 +558,11 @@ class RefdataCLMU(Refdata):
                 PersonName.create(name_str=name_str,
                                   name_type=name_type,
                                   source=ctx.source,
-                                  source_date=str(ctx.source_date),
+                                  source_date=ctx.source_date,
                                   person=comp_person,
                                   person_res='add_composer',
-                                  created_at=now_ts,
-                                  updated_at=now_ts)
+                                  created_at=ctx.load_ts,
+                                  updated_at=ctx.load_ts)
                 comp_names.append(name_str)
             except IntegrityError as e:
                 log.info(f"Duplicate PersonName '{name_str}' ({name_type})")
@@ -581,14 +595,14 @@ class RefdataCLMU(Refdata):
                 #print(comp_name, meta)
                 continue
 
-            now_ts = now_str()  # use same timestamp for everything here
             if not comp_person:
                 log.info(f"Could not parse comp_name '{comp_name}'")
                 Failure.create(entity_name=Person.__name__,
                                entity_str=comp_name,
+                               entity_info={'ctx': ctx},
                                operation=EntityOp.PARSE,
-                               created_at=now_ts,
-                               updated_at=now_ts)
+                               created_at=ctx.load_ts,
+                               updated_at=ctx.load_ts)
                 skip += 1
                 continue
 
@@ -599,9 +613,9 @@ class RefdataCLMU(Refdata):
                 comp_person = Person.get(Person.name == comp_person.name,
                                          Person.disamb == comp_person.disamb)
 
-            other_names = {'comp_str':     comp,
-                           'alt_comp_str': alt_comp,
-                           'comp_name':    comp_name}
+            other_names = {'comp_str'    : comp,
+                           'comp_name'   : comp_name,
+                           'alt_comp_str': alt_comp}
             for name_type, name_str in other_names.items():
                 if not name_str or name_str in comp_names:
                     continue
@@ -609,11 +623,11 @@ class RefdataCLMU(Refdata):
                     PersonName.create(name_str=name_str,
                                       name_type=name_type,
                                       source=ctx.source,
-                                      source_date=str(ctx.source_date),
+                                      source_date=ctx.source_date,
                                       person=comp_person,
                                       person_res='load_composer',
-                                      created_at=now_ts,
-                                      updated_at=now_ts)
+                                      created_at=ctx.load_ts,
+                                      updated_at=ctx.load_ts)
                 except IntegrityError as e:
                     log.info(f"Duplicate PersonName '{name_str}' ({name_type})")
                     pass
@@ -678,7 +692,6 @@ class RefdataCLMU(Refdata):
 
             meta = {}
             meta['short_title'] = title
-            now_ts = now_str()  # use same timestamp for everything here
 
             # look for a quick match without having to parse
             composer = self.find_composer(ctx, compsr_name)
@@ -696,9 +709,10 @@ class RefdataCLMU(Refdata):
                     log.info(f"Could not parse comp_name '{comp_name}'")
                     Failure.create(entity_name=Person.__name__,
                                    entity_str=comp_name,
+                                   entity_info={'ctx': ctx},
                                    operation=EntityOp.PARSE,
-                                   created_at=now_ts,
-                                   updated_at=now_ts)
+                                   created_at=ctx.load_ts,
+                                   updated_at=ctx.load_ts)
                     skip += 1
                     continue
                 '''
@@ -724,20 +738,21 @@ class RefdataCLMU(Refdata):
                 work.work_title  = real_title
                 work.work_date   = composed
                 work.source      = ctx.source
-                work.source_date = str(ctx.source_date)
+                work.source_date = ctx.source_date
                 work.save()
                 new_work = True
                 ins += 1
             except IntegrityError as e:
                 work_data = dict(work.__data__)
+                work_data['ctx'] = ctx
                 work_data['meta'] = meta
                 log.info(f"Conflict saving Work: {work_data}")
                 Conflict.create(entity_name=Work.__name__,
                                 entity_str=real_title,
                                 entity_info=work_data,
                                 operation=EntityOp.INSERT,
-                                created_at=now_ts,
-                                updated_at=now_ts)
+                                created_at=ctx.load_ts,
+                                updated_at=ctx.load_ts)
 
                 work = Work.get(Work.composer == work.composer,
                                 Work.name == work.name,
