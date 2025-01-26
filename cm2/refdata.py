@@ -298,10 +298,12 @@ class RefdataCLMU(Refdata):
         """
         TITLES           = ['Sir']
         TITLES_CI        = []
-        LAST_PREFIXES    = ['de', 'da', 'del', 'van', 'von', 'van der', 'of', 'di']
-        LAST_PREFIXES_CI = ['de', 'da', 'del', 'van', 'von', 'van der']
+        LAST_PREFIXES    = ['de', 'da', 'del', 'van', 'von', 'van der', 'von der',
+                            '(von)', 'Von', 'of', 'di']
+        LAST_PREFIXES_CI = ['de', 'da', 'del', 'van', 'von', 'van der', 'von der']
         SUFFIXES         = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
-                            'Jr.', 'Sr.', 'the Elder', 'the Younger', 'El Viejo', 'El Joven']
+                            'Jr.', 'Sr.', 'the Elder', 'the Younger', 'El Viejo', 'El Joven',
+                            '(i)', '(ii)']
         SUFFIXES_CI      = ['jr.', 'sr.', 'the elder', 'the younger', 'el viejo', 'el joven',
                             'le père', 'le fils', 'père', 'fils']
 
@@ -347,48 +349,74 @@ class RefdataCLMU(Refdata):
         assert len(pieces[1]) > 0
         last_pieces = pieces[0].split(' ')
         first_pieces = pieces[1].split(' ')
+        # REVISIT: are there cases here where we only parse out components when there are
+        # more than one element in either first_pieces or last_pieces???
 
         # title (if present) is usually at the leading edge of first_pieces, but may also
         # be represented as the entirety of first_pieces (in which case we will do our
         # best shot at parsing out the first name from last_pieces)
-        if first_pieces[0] in TITLES:
-            assert not person.title
-            person.title = first_pieces.pop(0)
-            if not first_pieces:
-                first_pieces.append(last_pieces.pop(0))
+        if first_pieces:
+            if first_pieces[0] in TITLES:
+                assert not person.title
+                person.title = first_pieces.pop(0)
+                if not first_pieces:
+                    first_pieces.append(last_pieces.pop(0))
+
+        # name suffixes may still be present at the trailing edge of either first_pieces
+        # or last_pieces; this is very not pretty, but we hardwire the ability to look for
+        # one and two word strings
+        if first_pieces:
+            if first_pieces[-1] in SUFFIXES:
+                assert not person.suffix
+                person.suffix = first_pieces.pop(-1)
+            elif ' '.join(first_pieces[-2:]) in SUFFIXES:
+                assert not person.suffix
+                person.suffix = first_pieces.pop(-2) + ' ' + first_pieces.pop(-1)
+
+        if last_pieces:
+            if last_pieces[-1] in SUFFIXES:
+                assert not person.suffix
+                person.suffix = last_pieces.pop(-1)
+            elif ' '.join(last_pieces[-2:]) in SUFFIXES:
+                assert not person.suffix
+                person.suffix = last_pieces.pop(-2) + ' ' + last_pieces.pop(-1)
 
         # look for last name prefix in the leading portion of last_pieces or the trailing
-        # portion of first_pieces; this is very not pretty, but we hardwire the ability to
-        # look for one and two word strings
-        if last_pieces[0] in LAST_PREFIXES:
-            assert not person.last_prefix
-            person.last_prefix = last_pieces.pop(0)
-        elif ' '.join(last_pieces[:2]) in LAST_PREFIXES:
-            assert not person.last_prefix
-            person.last_prefix = last_pieces.pop(0) + ' ' + last_pieces.pop(0)
+        # portion of first_pieces
+        if last_pieces:
+            if last_pieces[0] in LAST_PREFIXES:
+                assert not person.last_prefix
+                person.last_prefix = last_pieces.pop(0)
+            elif ' '.join(last_pieces[:2]) in LAST_PREFIXES:
+                assert not person.last_prefix
+                person.last_prefix = last_pieces.pop(0) + ' ' + last_pieces.pop(0)
 
-        if first_pieces[-1] in LAST_PREFIXES:
-            assert not person.last_prefix
-            person.last_prefix = first_pieces.pop(-1)
-        elif ' '.join(first_pieces[-2:]) in LAST_PREFIXES:
-            assert not person.last_prefix
-            person.last_prefix = first_pieces.pop(-2) + ' ' + first_pieces.pop(-1)
+        if first_pieces:
+            if first_pieces[-1] in LAST_PREFIXES:
+                assert not person.last_prefix
+                person.last_prefix = first_pieces.pop(-1)
+            elif ' '.join(first_pieces[-2:]) in LAST_PREFIXES:
+                assert not person.last_prefix
+                person.last_prefix = first_pieces.pop(-2) + ' ' + first_pieces.pop(-1)
 
         # there is also the case where a last_prefix/last_name sequence is preceded by a
         # comma (e.g. "Hildegard, of Bingen"), more like a suffix representation; for
         # consistency, we will swap the parts and parse as above
+        if first_pieces:
+            if first_pieces[0] in LAST_PREFIXES:
+                last_pieces, first_pieces = first_pieces, last_pieces
+                assert not person.last_prefix
+                person.last_prefix = last_pieces.pop(0)
+            elif ' '.join(first_pieces[:2]) in LAST_PREFIXES:
+                last_pieces, first_pieces = first_pieces, last_pieces
+                assert not person.last_prefix
+                person.last_prefix = last_pieces.pop(0) + ' ' + last_pieces.pop(0)
 
-        if first_pieces[0] in LAST_PREFIXES:
-            last_pieces, first_pieces = first_pieces, last_pieces
-            assert not person.last_prefix
-            person.last_prefix = last_pieces.pop(0)
-        elif ' '.join(first_pieces[:2]) in LAST_PREFIXES:
-            last_pieces, first_pieces = first_pieces, last_pieces
-            assert not person.last_prefix
-            person.last_prefix = last_pieces.pop(0) + ' ' + last_pieces.pop(0)
-
-        # first handle cases of only one name field remaining (either last or first)
+        # entering final phase of processing: set appropriate name fields based on what we
+        # have left--if no name pieces remain, we need to understand how we got here!!!
         assert last_pieces or first_pieces
+
+        # FIRST handle cases of only one name field remaining (either last or first)
         if not last_pieces:
             if person.last_prefix:
                 # treat first_pieces as last name
@@ -403,7 +431,7 @@ class RefdataCLMU(Refdata):
             person.last_name = ' '.join(last_pieces)
             return person
 
-        # now handle cases where we have to decide where stuff goes
+        # NOW handle cases where we have to decide where the various piece parts go
         assert last_pieces and first_pieces
         if len(first_pieces) > 1:
             # ATTENTION: disabling the following manipulation for now (clever, but doing
