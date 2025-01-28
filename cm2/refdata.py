@@ -306,52 +306,79 @@ class RefdataCLMU(Refdata):
         else:
             return keys.split(',')
 
-    def parse_comp_full_name(self, comp_name: str, disamb: str | None) -> Person | None:
-        """Note: this assumes that comp_name is in "full name" format (e.g. "First Middle
-        Last").  We try to get `parse_comp_name` do as much work as we can (transform as
-        appropriate).
+    def parse_comp_str(self, comp_str: str, by_last: bool = False) -> tuple:
+        """Return tuple: (comp_name, disamb, alt_comp_str, meta)
         """
-        comp_name_in = comp_name
-        # see if comp_name looks like a "by last" format (TODO: ...or otherwise not like a
-        # well-formed full name!!!)
-        if (idx := comp_name.rfind(',')) > -1:
-            if comp_name[idx+1:].strip() not in SUFFIXES:
-                return self.parse_comp_name(comp_name, disamb)
-            comp_name = comp_name[:idx] + comp_name[idx+1:]
-            # FIX: need to investigate this case and figure out how to handle (if
-            # something other than just multi-comma unparseable)!!!
-            if comp_name.find(',') > -1:
-                return None
+        comp_name    = None
+        addl_info    = None
+        alt_comp_str = None
+        meta         = {}
 
-        # insert a comma before a last prefix token (i.e. prefix delimited by spaces)
-        for pfx in LAST_PREFIXES:
-            if (idx := comp_name.rfind(f' {pfx} ')) > -1:
-                comp_name = comp_name[:idx] + ',' + comp_name[idx:]
-                return self.parse_comp_name(comp_name, disamb)
+        # Rule 1 - match any of the following line endings (will be added to person
+        # metainfo as "floruit"):
+        #   ", fl. 1971"
+        #   ", fl. 1430-1439"
+        #   " fl. 1675"
+        #   " fl. 1698-1698"
+        #
+        # Note that we are not enforcing exactly 4 digits per year, to allow for
+        # variability
+        rule1 = r'(.+?)(,? fl\. ([0-9-]+(\-[0-9]+)?))'
 
-        pieces = comp_name.split()
-        if len(pieces) == 1:
-            return self.parse_comp_name(comp_name, disamb)
+        # Rule 2 - match any of the following line endings (will be added to person
+        # metainfo as "dates"):
+        #   ", 1971-"
+        #   ", 1430-1439"
+        #   " 1975-"
+        #   " 1698-1698"
+        #
+        # Same as above regarding date formatting (though this rule only recognizes dates
+        # as years)
+        rule2 = r'(.+?)(,? (([0-9-]+)\-([0-9]+)?))'
 
-        # special-case this, just in case we need to do more process when titles are
-        # involved (for now, just move last name to front, as below)
-        if pieces[0] in TITLES:
-            comp_name = pieces[-1] + ', ' + ' '.join(pieces[:-1])
-            return self.parse_comp_name(comp_name, disamb)
+        if m := re.fullmatch(rule1, comp_str):
+            comp_name = m.group(1)
+            addl_info = m.group(2)
+            meta['floruit'] = m.group(3)
+        elif m := re.fullmatch(rule2, comp_str):
+            comp_name = m.group(1)
+            addl_info = m.group(2)
+            meta['dates'] = m.group(3)
+            meta['born'] = m.group(4)
+            if m.group(5):
+                meta['died'] = m.group(5)
+        else:
+            comp_name = comp_str
 
-        # keep trailing suffix in its place, while bring last name to front
-        if len(pieces) > 2 and pieces[-1] in SUFFIXES:
-            suffix = pieces.pop(-1)
-            comp_name = pieces[-1] + ', ' + ' '.join(pieces[:-1]) + ', ' + suffix
-            return self.parse_comp_name(comp_name, disamb)
-        elif len(pieces) > 3 and ' '.join(pieces[-2:]) in SUFFIXES:
-            suffix = pieces.pop(-2) + ' ' + pieces.pop(-1)
-            comp_name = pieces[-1] + ', ' + ' '.join(pieces[:-1]) + ', ' + suffix
-            return self.parse_comp_name(comp_name, disamb)
+        # source-specific processing for creating an alternate version of comp_str if
+        # addl_info is present (basically, swap the first two comma-delimited fields,
+        # omitting the intervening comma)
+        if addl_info:
+            if by_last:
+                pieces = comp_name.split(', ', 2)
+                if len(pieces) == 2:
+                    alt_comp_str = f"{pieces[1]} {pieces[0]}{addl_info}"
+                elif len(pieces) > 2:
+                    alt_comp_str = f"{pieces[1]} {pieces[0]}, {pieces[2]}{addl_info}"
+                else:
+                    assert len(pieces) == 1
+                    # also take care of case where one-part name has no comma separator
+                    # for addl_info
+                    if addl_info[0] == ' ':
+                        alt_comp_str = f"{pieces[0]},{addl_info}"
+            else:
+                # same as just above
+                if comp_name.find(' ') == -1 and addl_info[0] == ' ':
+                    alt_comp_str = f"{pieces[0]},{addl_info}"
 
-        # otherwise, just bring last name to front and pawn off processing
-        comp_name = pieces[-1] + ', ' + ' '.join(pieces[:-1])
-        return self.parse_comp_name(comp_name, disamb)
+        # structural fixup for comp_name: fix embedded and trailing commas; try and be
+        # as specific as possible initially (can broaden as needed, based on anomalies)
+        comp_name = re.sub(r'(\pL)\,(\pL)', r'\1, \2', comp_name)
+        if comp_name[-1] == ',':
+            comp_name = comp_name.rstrip(',')
+
+        disamb = addl_info.lstrip(', ') if addl_info else None
+        return comp_name, disamb, alt_comp_str, meta
 
     def parse_comp_name(self, comp_name: str, disamb: str | None) -> Person | None:
         """Note: this assumes that comp_name is "by last" (e.g. "Last, First Middle")
@@ -509,79 +536,52 @@ class RefdataCLMU(Refdata):
         person.last_name = ' '.join(last_pieces)
         return person
 
-    def parse_comp_str(self, comp_str: str, by_last: bool = False) -> tuple:
-        """Return tuple: (comp_name, disamb, alt_comp_str, meta)
+    def parse_comp_full_name(self, comp_name: str, disamb: str | None) -> Person | None:
+        """Note: this assumes that comp_name is in "full name" format (e.g. "First Middle
+        Last").  We try to get `parse_comp_name` do as much work as we can (transforming
+        comp_name appropriately herein).
         """
-        comp_name    = None
-        addl_info    = None
-        alt_comp_str = None
-        meta         = {}
+        comp_name_in = comp_name
+        # see if comp_name looks like a "by last" format (TODO: ...or otherwise not like a
+        # well-formed full name!!!)
+        if (idx := comp_name.rfind(',')) > -1:
+            if comp_name[idx+1:].strip() not in SUFFIXES:
+                return self.parse_comp_name(comp_name, disamb)
+            comp_name = comp_name[:idx] + comp_name[idx+1:]
+            # FIX: need to investigate this case and figure out how to handle (if
+            # something other than just multi-comma unparseable)!!!
+            if comp_name.find(',') > -1:
+                return None
 
-        # Rule 1 - match any of the following line endings (will be added to person
-        # metainfo as "floruit"):
-        #   ", fl. 1971"
-        #   ", fl. 1430-1439"
-        #   " fl. 1675"
-        #   " fl. 1698-1698"
-        #
-        # Note that we are not enforcing exactly 4 digits per year, to allow for
-        # variability
-        rule1 = r'(.+?)(,? fl\. ([0-9-]+(\-[0-9]+)?))'
+        # insert a comma before a last prefix token (i.e. prefix delimited by spaces)
+        for pfx in LAST_PREFIXES:
+            if (idx := comp_name.rfind(f' {pfx} ')) > -1:
+                comp_name = comp_name[:idx] + ',' + comp_name[idx:]
+                return self.parse_comp_name(comp_name, disamb)
 
-        # Rule 2 - match any of the following line endings (will be added to person
-        # metainfo as "dates"):
-        #   ", 1971-"
-        #   ", 1430-1439"
-        #   " 1975-"
-        #   " 1698-1698"
-        #
-        # Same as above regarding date formatting (though this rule only recognizes dates
-        # as years)
-        rule2 = r'(.+?)(,? (([0-9-]+)\-([0-9]+)?))'
+        pieces = comp_name.split()
+        if len(pieces) == 1:
+            return self.parse_comp_name(comp_name, disamb)
 
-        if m := re.fullmatch(rule1, comp_str):
-            comp_name = m.group(1)
-            addl_info = m.group(2)
-            meta['floruit'] = m.group(3)
-        elif m := re.fullmatch(rule2, comp_str):
-            comp_name = m.group(1)
-            addl_info = m.group(2)
-            meta['dates'] = m.group(3)
-            meta['born'] = m.group(4)
-            if m.group(5):
-                meta['died'] = m.group(5)
-        else:
-            comp_name = comp_str
+        # special-case this, just in case we need to do more process when titles are
+        # involved (for now, just move last name to front, as below)
+        if pieces[0] in TITLES:
+            comp_name = pieces[-1] + ', ' + ' '.join(pieces[:-1])
+            return self.parse_comp_name(comp_name, disamb)
 
-        # source-specific processing for creating an alternate version of comp_str if
-        # addl_info is present (basically, swap the first two comma-delimited fields,
-        # omitting the intervening comma)
-        if addl_info:
-            if by_last:
-                pieces = comp_name.split(', ', 2)
-                if len(pieces) == 2:
-                    alt_comp_str = f"{pieces[1]} {pieces[0]}{addl_info}"
-                elif len(pieces) > 2:
-                    alt_comp_str = f"{pieces[1]} {pieces[0]}, {pieces[2]}{addl_info}"
-                else:
-                    assert len(pieces) == 1
-                    # also take care of case where one-part name has no comma separator
-                    # for addl_info
-                    if addl_info[0] == ' ':
-                        alt_comp_str = f"{pieces[0]},{addl_info}"
-            else:
-                # same as just above
-                if comp_name.find(' ') == -1 and addl_info[0] == ' ':
-                    alt_comp_str = f"{pieces[0]},{addl_info}"
+        # keep trailing suffix in its place, while bring last name to front
+        if len(pieces) > 2 and pieces[-1] in SUFFIXES:
+            suffix = pieces.pop(-1)
+            comp_name = pieces[-1] + ', ' + ' '.join(pieces[:-1]) + ', ' + suffix
+            return self.parse_comp_name(comp_name, disamb)
+        elif len(pieces) > 3 and ' '.join(pieces[-2:]) in SUFFIXES:
+            suffix = pieces.pop(-2) + ' ' + pieces.pop(-1)
+            comp_name = pieces[-1] + ', ' + ' '.join(pieces[:-1]) + ', ' + suffix
+            return self.parse_comp_name(comp_name, disamb)
 
-        # structural fixup for comp_name: fix embedded and trailing commas; try and be
-        # as specific as possible initially (can broaden as needed, based on anomalies)
-        comp_name = re.sub(r'(\pL)\,(\pL)', r'\1, \2', comp_name)
-        if comp_name[-1] == ',':
-            comp_name = comp_name.rstrip(',')
-
-        disamb = addl_info.lstrip(', ') if addl_info else None
-        return comp_name, disamb, alt_comp_str, meta
+        # otherwise, just bring last name to front and pawn off processing
+        comp_name = pieces[-1] + ', ' + ' '.join(pieces[:-1])
+        return self.parse_comp_name(comp_name, disamb)
 
     def add_composer(self, ctx: LoadCtx, comp_person: Person, meta: dict) -> tuple[bool, list]:
         """Return tuple: (new comp created? [bool], list of PersonNames)
@@ -686,11 +686,16 @@ class RefdataCLMU(Refdata):
                 continue
 
             new_comp, comp_names = self.add_composer(ctx, comp_person, meta)
-            if not new_comp:
+            if new_comp:
+                ins += 1
+            else:
                 # REVISIT: there needs to be a process for disambiguating names whenever
                 # duplicates are added to (or detected in) Person!!!
                 comp_person = Person.get(Person.name == comp_person.name,
                                          Person.disamb == comp_person.disamb)
+                # FIX: should really only consider this an update if new person_names are
+                # actually added, but assume we are doing so (for now)!!!
+                upd += 1
 
             other_names = {'comp_str'    : comp_str,
                            'comp_name'   : comp_name,
@@ -848,7 +853,6 @@ class RefdataCLMU(Refdata):
             if not work:
                 skip += 1
                 continue
-            new_work = None
             try:
                 work.work_type   = genre
                 work.work_title  = real_title
@@ -856,7 +860,6 @@ class RefdataCLMU(Refdata):
                 work.source      = ctx.source
                 work.source_date = ctx.source_date
                 work.save()
-                new_work = True
                 ins += 1
             except IntegrityError as e:
                 work_data = dict(work.__data__)
@@ -877,7 +880,6 @@ class RefdataCLMU(Refdata):
                 # FIX: not really updating, but separate this case from unparseable!!!
                 # note that we fall through here so that we can (possibly) add new
                 # work_names
-                new_work = False
                 upd += 1
 
         return ins, upd, skip
