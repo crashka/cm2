@@ -21,8 +21,8 @@ from .dbcore import db, BaseModel
 class EntityOp(StrEnum):
     PARSE  = "parse"
     FIND   = "find"
+    LOAD   = "load"
     INSERT = "insert"
-    UPDATE = "update"
 
 ##########
 # Person #
@@ -313,6 +313,7 @@ class Conflict(BaseModel):
     entity_str  = TextField()                # raw name string (no fixup)
     entity_info = JSONField()                # entity attributes (plus ctx/metainfo)
     operation   = TextField()
+    reason      = TextField(null=True)
     status      = TextField(default='open')  # 'open', 'in process, 'resolved', 'withdrawn'
     parent_id   = IntegerField(null=True)    # id of parent (resolved to) record
 
@@ -332,6 +333,7 @@ class Failure(BaseModel):
     entity_str  = TextField()                # raw name string (no fixup)
     entity_info = JSONField()                # relevant ctx and metainfo (if any)
     operation   = TextField()
+    reason      = TextField(null=True)
     status      = TextField(default='open')  # 'open', 'in process, 'resolved', 'withdrawn'
     parent_id   = IntegerField(null=True)    # id of parent (resolved to) record
 

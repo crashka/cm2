@@ -271,6 +271,19 @@ COMP_MATCH_STRGTH = {
     'alt_var_name':   1
 }
 
+# TODO: move these strings to config file (default level with source-specific
+# overrides)!!!
+TITLES           = ['Sir']
+TITLES_CI        = []
+LAST_PREFIXES    = ['de', 'da', 'del', 'van', 'von', 'van der', 'von der',
+                    '(von)', 'Von', 'of', 'di', 'zu']
+LAST_PREFIXES_CI = ['de', 'da', 'del', 'van', 'von', 'van der', 'von der']
+SUFFIXES         = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
+                    'Jr.', 'Sr.', 'the Elder', 'the Younger', 'El Viejo', 'El Joven',
+                    '(i)', '(ii)']
+SUFFIXES_CI      = ['jr.', 'sr.', 'the elder', 'the younger', 'el viejo', 'el joven',
+                    'le père', 'le fils', 'père', 'fils']
+
 class RefdataCLMU(Refdata):
     """
     """
@@ -293,20 +306,56 @@ class RefdataCLMU(Refdata):
         else:
             return keys.split(',')
 
-    def parse_comp_name(self, comp_name: str, disamb: str | None) -> Person | None:
+    def parse_comp_full_name(self, comp_name: str, disamb: str | None) -> Person | None:
+        """Note: this assumes that comp_name is in "full name" format (e.g. "First Middle
+        Last").  We try to get `parse_comp_name` do as much work as we can (transform as
+        appropriate).
         """
-        """
-        TITLES           = ['Sir']
-        TITLES_CI        = []
-        LAST_PREFIXES    = ['de', 'da', 'del', 'van', 'von', 'van der', 'von der',
-                            '(von)', 'Von', 'of', 'di']
-        LAST_PREFIXES_CI = ['de', 'da', 'del', 'van', 'von', 'van der', 'von der']
-        SUFFIXES         = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
-                            'Jr.', 'Sr.', 'the Elder', 'the Younger', 'El Viejo', 'El Joven',
-                            '(i)', '(ii)']
-        SUFFIXES_CI      = ['jr.', 'sr.', 'the elder', 'the younger', 'el viejo', 'el joven',
-                            'le père', 'le fils', 'père', 'fils']
+        comp_name_in = comp_name
+        # see if comp_name looks like a "by last" format (TODO: ...or otherwise not like a
+        # well-formed full name!!!)
+        if (idx := comp_name.rfind(',')) > -1:
+            if comp_name[idx+1:].strip() not in SUFFIXES:
+                return self.parse_comp_name(comp_name, disamb)
+            comp_name = comp_name[:idx] + comp_name[idx+1:]
+            # FIX: need to investigate this case and figure out how to handle (if
+            # something other than just multi-comma unparseable)!!!
+            if comp_name.find(',') > -1:
+                return None
 
+        # insert a comma before a last prefix token (i.e. prefix delimited by spaces)
+        for pfx in LAST_PREFIXES:
+            if (idx := comp_name.rfind(f' {pfx} ')) > -1:
+                comp_name = comp_name[:idx] + ',' + comp_name[idx:]
+                return self.parse_comp_name(comp_name, disamb)
+
+        pieces = comp_name.split()
+        if len(pieces) == 1:
+            return self.parse_comp_name(comp_name, disamb)
+
+        # special-case this, just in case we need to do more process when titles are
+        # involved (for now, just move last name to front, as below)
+        if pieces[0] in TITLES:
+            comp_name = pieces[-1] + ', ' + ' '.join(pieces[:-1])
+            return self.parse_comp_name(comp_name, disamb)
+
+        # keep trailing suffix in its place, while bring last name to front
+        if len(pieces) > 2 and pieces[-1] in SUFFIXES:
+            suffix = pieces.pop(-1)
+            comp_name = pieces[-1] + ', ' + ' '.join(pieces[:-1]) + ', ' + suffix
+            return self.parse_comp_name(comp_name, disamb)
+        elif len(pieces) > 3 and ' '.join(pieces[-2:]) in SUFFIXES:
+            suffix = pieces.pop(-2) + ' ' + pieces.pop(-1)
+            comp_name = pieces[-1] + ', ' + ' '.join(pieces[:-1]) + ', ' + suffix
+            return self.parse_comp_name(comp_name, disamb)
+
+        # otherwise, just bring last name to front and pawn off processing
+        comp_name = pieces[-1] + ', ' + ' '.join(pieces[:-1])
+        return self.parse_comp_name(comp_name, disamb)
+
+    def parse_comp_name(self, comp_name: str, disamb: str | None) -> Person | None:
+        """Note: this assumes that comp_name is "by last" (e.g. "Last, First Middle")
+        """
         person = Person()
         if disamb:
             person.disamb = disamb
@@ -324,7 +373,7 @@ class RefdataCLMU(Refdata):
             if pieces[-1] in SUFFIXES or pieces[-1].lower() in SUFFIXES_CI:
                 assert not person.suffix
                 person.suffix = pieces.pop(-1)
-            if pieces[1] in SUFFIXES or pieces[1].lower() in SUFFIXES_CI:
+            elif pieces[1] in SUFFIXES or pieces[1].lower() in SUFFIXES_CI:
                 assert not person.suffix
                 person.suffix = pieces.pop(1)
 
@@ -347,8 +396,8 @@ class RefdataCLMU(Refdata):
         assert len(pieces) == 2
         assert len(pieces[0]) > 0
         assert len(pieces[1]) > 0
-        last_pieces = pieces[0].split(' ')
-        first_pieces = pieces[1].split(' ')
+        last_pieces = pieces[0].split()
+        first_pieces = pieces[1].split()
         # REVISIT: are there cases here where we only parse out components when there are
         # more than one element in either first_pieces or last_pieces???
 
@@ -461,7 +510,7 @@ class RefdataCLMU(Refdata):
         return person
 
     def parse_comp_str(self, comp_str: str, by_last: bool = False) -> tuple:
-        """
+        """Return tuple: (comp_name, disamb, alt_comp_str, meta)
         """
         comp_name    = None
         addl_info    = None
@@ -554,6 +603,7 @@ class RefdataCLMU(Refdata):
                             entity_str=comp_person.name,
                             entity_info=person_data,
                             operation=EntityOp.INSERT,
+                            reason="duplicate",
                             created_at=ctx.load_ts,
                             updated_at=ctx.load_ts)
 
@@ -609,10 +659,10 @@ class RefdataCLMU(Refdata):
         soup = data
         content = soup.select_one("div.view-content")
         for tr in content.select("tbody tr"):
-            comp = tr.select_one("td.views-field-name").string.strip()
+            comp_str = tr.select_one("td.views-field-name").string.strip()
             link = tr.select_one("td.views-field-count").a['href']
 
-            comp_name, disamb, alt_comp, meta = self.parse_comp_str(comp, by_last=True)
+            comp_name, disamb, alt_comp_str, meta = self.parse_comp_str(comp_str, by_last=True)
             if link:
                 meta['clmu_link'] = link
 
@@ -628,7 +678,8 @@ class RefdataCLMU(Refdata):
                 Failure.create(entity_name=Person.__name__,
                                entity_str=comp_name,
                                entity_info={'ctx': ctx},
-                               operation=EntityOp.PARSE,
+                               operation=EntityOp.LOAD,
+                               reason="could not parse",
                                created_at=ctx.load_ts,
                                updated_at=ctx.load_ts)
                 skip += 1
@@ -641,9 +692,9 @@ class RefdataCLMU(Refdata):
                 comp_person = Person.get(Person.name == comp_person.name,
                                          Person.disamb == comp_person.disamb)
 
-            other_names = {'comp_str'    : comp,
+            other_names = {'comp_str'    : comp_str,
                            'comp_name'   : comp_name,
-                           'alt_comp_str': alt_comp}
+                           'alt_comp_str': alt_comp_str}
             for name_type, name_str in other_names.items():
                 if not name_str or name_str in comp_names:
                     continue
@@ -711,23 +762,28 @@ class RefdataCLMU(Refdata):
             composed    = item_div['composed']
             title       = title_div.span.string.strip()
             if title != item_title:
-                log.info(f"{title} != {item_title} ({ctx.file}:{i})")
+                log.info(f"load_work: '{title}' != '{item_title}' ({ctx.file}:{i})")
             if not compsr_div:
-                log.info(f"{item_title} has no composer div ({ctx.file}:{i})")
+                log.info(f"load_work: '{item_title}' no composer div, skipping ({ctx.file}:{i})")
+                Failure.create(entity_name=Work.__name__,
+                               entity_str=title,
+                               entity_info={'ctx': ctx},
+                               operation=EntityOp.LOAD,
+                               reason="no composer div",
+                               created_at=ctx.load_ts,
+                               updated_at=ctx.load_ts)
                 continue
-            compsr_name = compsr_div.span.string.strip()
-            real_title  = title_span.string.strip()
+            comp_str   = compsr_div.span.string.strip()
+            real_title = title_span.string.strip()
 
             meta = {}
             meta['short_title'] = title
 
             # look for a quick match without having to parse
-            composer = self.find_composer(ctx, compsr_name)
-            if not composer:
-                r'''
-                comp_name, disamb, alt_comp, meta = self.parse_comp_str(compsr_name)
-                comp_person = self.parse_comp_name(comp_name, disamb)
-
+            comp_person = self.find_composer(ctx, comp_str)
+            if not comp_person:
+                comp_name, disamb, alt_comp_str, meta = self.parse_comp_str(comp_str)
+                comp_person = self.parse_comp_full_name(comp_name, disamb)
                 if dryrun:
                     full_name = comp_person.full_name if comp_person else '[UNPARSED]'
                     print(f"{full_name} (new): {real_title}")
@@ -738,25 +794,57 @@ class RefdataCLMU(Refdata):
                     Failure.create(entity_name=Person.__name__,
                                    entity_str=comp_name,
                                    entity_info={'ctx': ctx},
-                                   operation=EntityOp.PARSE,
+                                   operation=EntityOp.LOAD,
+                                   reason="could not parse",
                                    created_at=ctx.load_ts,
                                    updated_at=ctx.load_ts)
+                    log.info(f"Could not load work '{real_title}'")
+                    Failure.create(entity_name=Work.__name__,
+                                   entity_str=real_title,
+                                   entity_info={'ctx': ctx},
+                                   operation=EntityOp.LOAD,
+                                   reason="no composer rec",
+                                   created_at=ctx.load_ts,
+                                   updated_at=ctx.load_ts)
+
                     skip += 1
                     continue
-                '''
-                # TODO: have to do more work in processing composer string (possibly
-                # adding person and/or records)!!!
-                log.info(f"Composer name '{compsr_name}' not found, skipping work {real_title}")
-                continue
+
+                new_comp, comp_names = self.add_composer(ctx, comp_person, meta)
+                if not new_comp:
+                    # REVISIT: there needs to be a process for disambiguating names
+                    # whenever duplicates are added to (or detected in) Person!!!
+                    comp_person = Person.get(Person.name == comp_person.name,
+                                             Person.disamb == comp_person.disamb)
+
+                other_names = {'comp_str'    : comp_str,
+                               'comp_name'   : comp_name,
+                               'alt_comp_str': alt_comp_str}
+                for name_type, name_str in other_names.items():
+                    if not name_str or name_str in comp_names:
+                        continue
+                    try:
+                        PersonName.create(name_str=name_str,
+                                          name_type=name_type,
+                                          source=ctx.source,
+                                          source_date=ctx.source_date,
+                                          person=comp_person,
+                                          person_res='load_work',
+                                          created_at=ctx.load_ts,
+                                          updated_at=ctx.load_ts)
+                    except IntegrityError as e:
+                        log.info(f"Duplicate PersonName '{name_str}' ({name_type})")
+                        pass
+
             #work = self.parse_work_name(real_title)
             if dryrun:
-                print(f"{composer.name}: {real_title}")
+                print(f"{comp_person.name}: {real_title}")
                 #print(f"{real_title} => {work.name}")
                 #print(comp_name, meta)
                 continue
 
             work = Work()
-            work.composer = composer
+            work.composer = comp_person
             if not work:
                 skip += 1
                 continue
@@ -778,7 +866,8 @@ class RefdataCLMU(Refdata):
                 Conflict.create(entity_name=Work.__name__,
                                 entity_str=real_title,
                                 entity_info=work_data,
-                                operation=EntityOp.INSERT,
+                                operation=EntityOp.LOAD,
+                                reason="duplicate",
                                 created_at=ctx.load_ts,
                                 updated_at=ctx.load_ts)
 
